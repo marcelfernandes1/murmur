@@ -15,9 +15,11 @@ final class HistoryStore {
         }
     }
 
-    func add(_ text: String) {
+    /// - Parameter original: the pre-cleanup text (raw words, fillers removed) when
+    ///   smart cleanup ran, so the comparison screen can show input vs. output.
+    func add(_ text: String, original: String? = nil) {
         let context = container.mainContext
-        context.insert(Transcript(text: text))
+        context.insert(Transcript(text: text, original: original))
         try? context.save()
     }
 }

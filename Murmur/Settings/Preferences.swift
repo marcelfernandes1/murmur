@@ -38,8 +38,8 @@ final class Preferences {
 
     /// Local LLM used for the optional "smart cleanup" pass.
     enum CleanupModel: String, CaseIterable, Identifiable {
-        case qwen3B
         case qwen1_5B
+        case qwen3B
 
         var id: String { rawValue }
         var repo: String {
@@ -56,8 +56,8 @@ final class Preferences {
         }
         var displayName: String {
             switch self {
-            case .qwen3B: return "Qwen2.5 3B — best cleanup (~2 GB)"
             case .qwen1_5B: return "Qwen2.5 1.5B — fastest (~1 GB)"
+            case .qwen3B: return "Qwen2.5 3B — best cleanup, slower (~2 GB)"
             }
         }
     }
@@ -147,9 +147,17 @@ final class Preferences {
             ? true
             : defaults.bool(forKey: Keys.removeFillers)
         smartCleanup = defaults.bool(forKey: Keys.smartCleanup)
-        cleanupModel = CleanupModel(rawValue: defaults.string(forKey: Keys.cleanupModel) ?? "") ?? .qwen3B
+        let storedCleanup = defaults.string(forKey: Keys.cleanupModel) ?? ""
+        cleanupModel = CleanupModel(rawValue: storedCleanup) ?? .qwen1_5B
         launchAtLogin = (SMAppService.mainApp.status == .enabled)
         hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)
+
+        // Apple's on-device cleanup was removed (too slow). Rewrite any stale or
+        // unknown stored value (e.g. the old "appleFoundation") to the fast Qwen
+        // default so it doesn't keep silently falling back each launch.
+        if CleanupModel(rawValue: storedCleanup) == nil {
+            defaults.set(CleanupModel.qwen1_5B.rawValue, forKey: Keys.cleanupModel)
+        }
     }
 
     private let defaults: UserDefaults

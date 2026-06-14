@@ -5,6 +5,9 @@ extension KeyboardShortcuts.Name {
     static let dictation = Self("dictation")
     static let dictation2 = Self("dictation2")
     static let dictation3 = Self("dictation3")
+    /// A single-key (modifier-less) trigger, set via `SingleKeyRecorder` since the
+    /// library's own Recorder UI refuses modifier-less keys.
+    static let dictationSingle = Self("dictationSingle")
 }
 
 /// Push-to-talk triggers: the Fn / 🌐 key (toggleable) plus up to three custom
@@ -15,7 +18,7 @@ final class HotkeyManager {
     var onPress: () -> Void = {}
     var onRelease: () -> Void = {}
 
-    static let shortcutNames: [KeyboardShortcuts.Name] = [.dictation, .dictation2, .dictation3]
+    static let shortcutNames: [KeyboardShortcuts.Name] = [.dictation, .dictation2, .dictation3, .dictationSingle]
 
     private var fnEnabled = false
     private var fnDown = false

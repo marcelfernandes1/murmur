@@ -17,7 +17,7 @@ final class DictationController {
     private let accessibility = AccessibilityManager()
     private let notch = NotchController()
     private let history: HistoryStore
-    private var cleaner: LLMCleaner
+    private var cleaner: any TextCleaner
 
     private var isRecording = false
     private var awaitingResult = false
@@ -29,7 +29,7 @@ final class DictationController {
         self.preferences = preferences
         self.vocabulary = vocabulary
         self.engine = Self.makeEngine(for: preferences.model)
-        self.cleaner = LLMCleaner(repo: preferences.cleanupModel.repo, fileName: preferences.cleanupModel.fileName)
+        self.cleaner = Self.makeCleaner(for: preferences.cleanupModel)
     }
 
     private static func makeEngine(for choice: Preferences.ModelChoice) -> SpeechEngine {
@@ -37,6 +37,10 @@ final class DictationController {
         case .whisper: return WhisperService(modelName: choice.whisperKitName)
         case .parakeet: return ParakeetService()
         }
+    }
+
+    private static func makeCleaner(for choice: Preferences.CleanupModel) -> any TextCleaner {
+        LLMCleaner(repo: choice.repo, fileName: choice.fileName)
     }
 
     private func attachStateHandler(to engine: SpeechEngine) {
@@ -82,9 +86,9 @@ final class DictationController {
         attachStateHandler(to: newEngine)
     }
 
-    /// Rebuild + (re)load the cleanup LLM for the current preference.
+    /// Rebuild + (re)load the cleanup backend for the current preference.
     func applyCleanup() {
-        cleaner = LLMCleaner(repo: preferences.cleanupModel.repo, fileName: preferences.cleanupModel.fileName)
+        cleaner = Self.makeCleaner(for: preferences.cleanupModel)
         if preferences.smartCleanup {
             appState.cleanupPhase = .preparing
             attachCleanupHandler()
@@ -156,6 +160,11 @@ final class DictationController {
     private func beginRecording() {
         guard !isRecording else { return }
         isRecording = true
+        // The notch live preview only makes sense on a fast, non-autoregressive
+        // engine. With Whisper, repeatedly transcribing the growing buffer is
+        // O(n²) and starves the final transcription — so we skip it there and just
+        // transcribe once on release.
+        let streamingCapable = preferences.model.engine == .parakeet
         Task {
             do {
                 try await recorder.start()
@@ -166,7 +175,9 @@ final class DictationController {
                 }
                 appState.status = .listening
                 notch.showListening()
-                if preferences.streaming { startStreamingLoop() }
+                if preferences.streaming && streamingCapable {
+                    startStreamingLoop()
+                }
             } catch {
                 isRecording = false
                 appState.status = .error(error.localizedDescription)
@@ -220,13 +231,25 @@ final class DictationController {
                     language: preferences.language.code,
                     vocabulary: vocabulary.terms
                 )
+                var original: String? = nil
                 if preferences.smartCleanup {
                     notch.showPreparing("Polishing…")
-                    text = await cleaner.clean(text)
+                    // Strip basic fillers deterministically FIRST (instant, 100% reliable
+                    // for um/uh/ah/erm/hmm) so the LLM never has to — it's slow and
+                    // unreliable at it, and offloading mechanical work leaves it only the
+                    // judgment calls (self-corrections, punctuation, spoken numbers, and
+                    // contextual fillers like "you know"/"like"). Fewer reasons for it to
+                    // "fix" things means less over-editing.
+                    if preferences.removeFillers { text = TranscriptCleaner.removeFillers(text) }
+                    original = text // the exact input to the LLM, for the comparison screen
+                    let cleaned = await cleaner.clean(text)
+                    // Reject refusals / "answers" so a guardrailed model can never
+                    // paste "As an LLM I cannot…" into your text in place of cleanup.
+                    text = CleanupGuard.sanitize(cleaned, original: text)
                 } else if preferences.removeFillers {
                     text = TranscriptCleaner.removeFillers(text)
                 }
-                deliver(text)
+                deliver(text, original: original)
                 appState.status = .idle
             } catch {
                 appState.status = .error(error.localizedDescription)
@@ -236,13 +259,15 @@ final class DictationController {
         }
     }
 
-    private func deliver(_ text: String) {
+    private func deliver(_ text: String, original: String? = nil) {
         guard !text.isEmpty else {
             notch.dismiss()
             return
         }
         appState.lastTranscript = text
-        history.add(text)
+        // Only record `original` when it actually differs from the delivered text,
+        // so the comparison screen highlights real edits (not no-ops).
+        history.add(text, original: original != text ? original : nil)
 
         appState.accessibilityEnabled = accessibility.isTrusted
         let canInsert = accessibility.isTrusted
