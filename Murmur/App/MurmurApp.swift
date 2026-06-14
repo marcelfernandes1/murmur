@@ -9,6 +9,7 @@ struct MurmurApp: App {
         MenuBarExtra("Murmur", systemImage: "waveform") {
             MenuBarContent(
                 showHistory: { delegate.showHistory() },
+                showComparison: { delegate.showComparison() },
                 showSettings: { delegate.showSettings() }
             )
             .environment(delegate.appState)
@@ -22,6 +23,7 @@ struct MurmurApp: App {
 /// expanded here in later phases.
 private struct MenuBarContent: View {
     let showHistory: () -> Void
+    let showComparison: () -> Void
     let showSettings: () -> Void
 
     @Environment(AppState.self) private var appState
@@ -50,6 +52,7 @@ private struct MenuBarContent: View {
         Divider()
 
         Button("History…") { showHistory() }
+        Button("Cleanup Comparison…") { showComparison() }
         Button("Settings…") { showSettings() }
             .keyboardShortcut(",")
 

@@ -5,37 +5,7 @@ import LLM
 /// via LLM.swift). Removes fillers + false starts, converts spoken numbers to
 /// digits, and fixes punctuation — fully offline. Stateless: each call builds a
 /// fresh ChatML prompt (no growing history).
-actor LLMCleaner {
-    static let systemPrompt = """
-    You are a strict transcription cleaner. You are given raw speech-to-text and must \
-    return the SAME text with only minimal, mechanical fixes. Preserve the speaker's EXACT words.
-
-    ONLY these edits are allowed:
-    1. Delete filler words / verbal tics: "um", "uh", "er", "ah", "hmm", "you know", "I mean", \
-    and "like"/"so" only when used as filler.
-    2. Delete false starts and accidental repeats, e.g. "I I want" -> "I want", \
-    "go to to the store" -> "go to the store". Keep the words the speaker ended up using.
-    3. Fix capitalization and add punctuation (. , ? !).
-    4. Write spoken numbers, dates, and times as digits, e.g. "twenty twenty six" -> "2026".
-
-    You are FORBIDDEN from:
-    - Rewording or replacing ANY word with a synonym. Keep "in order to", "wanna", "gonna", \
-    "kinda", etc. EXACTLY as said.
-    - Adding ANY word the speaker did not say (never add words like "feature", "intend", \
-    "since", "however", "performs").
-    - Reordering, restructuring, merging, or splitting the speaker's ideas beyond adding punctuation.
-    - Summarizing, shortening, expanding, or translating.
-
-    If in doubt, leave it unchanged. Under-editing is correct; rewriting is a failure. \
-    Output ONLY the cleaned text, nothing else.
-    """
-
-    /// One-shot example to anchor minimal-edit behaviour.
-    private static let exampleInput =
-        "um okay so i i wanna grab like twenty bucks you know and uh head over to the store in order to buy some stuff"
-    private static let exampleOutput =
-        "Okay, so I wanna grab 20 bucks and head over to the store in order to buy some stuff."
-
+actor LLMCleaner: TextCleaner {
     private let repo: String
     private let fileName: String
     private var llm: LLM?
@@ -61,19 +31,21 @@ actor LLMCleaner {
         guard !trimmed.isEmpty else { return text }
         guard let llm = try? await load() else { return text }
 
-        let prompt = """
-        <|im_start|>system
-        \(Self.systemPrompt)<|im_end|>
-        <|im_start|>user
-        \(Self.exampleInput)<|im_end|>
-        <|im_start|>assistant
-        \(Self.exampleOutput)<|im_end|>
-        <|im_start|>user
-        \(trimmed)<|im_end|>
-        <|im_start|>assistant
+        var prompt = "<|im_start|>system\n\(CleanupPrompt.system)<|im_end|>\n"
+        for example in CleanupPrompt.examples {
+            prompt += "<|im_start|>user\n\(example.input)<|im_end|>\n"
+            prompt += "<|im_start|>assistant\n\(example.output)<|im_end|>\n"
+        }
+        prompt += "<|im_start|>user\n\(trimmed)<|im_end|>\n<|im_start|>assistant\n"
 
-        """
         let raw = await llm.getCompletion(from: prompt)
+        // LLM.swift's getCompletion does NOT clear the context afterwards, so the
+        // KV cache would otherwise accumulate every dictation — making each call
+        // slower, conditioning the model on its own prior "cleaned" outputs (which
+        // pushes it to over-polish), and eventually silently no-op'ing once the
+        // context fills. Reset so the next cleanup starts fresh and stateless. The
+        // gap before the next dictation guarantees this completes in time.
+        llm.reset()
         let cleaned = Self.tidy(raw)
         return cleaned.isEmpty ? trimmed : cleaned
     }

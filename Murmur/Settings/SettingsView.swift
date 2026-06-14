@@ -37,7 +37,10 @@ struct SettingsView: View {
                 KeyboardShortcuts.Recorder("Shortcut 1", name: .dictation)
                 KeyboardShortcuts.Recorder("Shortcut 2", name: .dictation2)
                 KeyboardShortcuts.Recorder("Shortcut 3", name: .dictation3)
-                Text("Click a box and press a key or combo. Hold any trigger to dictate; release to transcribe.")
+                LabeledContent("Single key") {
+                    SingleKeyRecorder(name: .dictationSingle) { dictation.applyTriggers() }
+                }
+                Text("Click a box and press a key or combo. The combo boxes need a modifier (⌘/⌥/⌃); use “Single key” to bind one bare key — no modifier needed. A single key is captured globally and won't type, so pick one you don't otherwise use (a function key is ideal). Hold any trigger to dictate; release to transcribe.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -62,16 +65,18 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
 
                 Toggle("Remove filler words (um, uh, erm…)", isOn: $prefs.removeFillers)
-                    .disabled(prefs.smartCleanup)
+                Text("Runs instantly and always. With smart cleanup on, fillers are stripped before the model sees the text, so it can't leave any behind.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Toggle("Streaming (live preview while you talk)", isOn: $prefs.streaming)
-                Text("Experimental: transcribes as you speak and previews it in the notch. Best for longer dictations; may not speed up short ones.")
+                Text("Experimental: transcribes as you speak and previews it in the notch (Parakeet only). Best for longer dictations; may not speed up short ones.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Smart cleanup (local LLM)") {
-                Toggle("Polish transcripts with a local LLM", isOn: $prefs.smartCleanup)
+            Section("Smart cleanup (on-device LLM)") {
+                Toggle("Polish transcripts with an on-device model", isOn: $prefs.smartCleanup)
                 if prefs.smartCleanup {
                     Picker("Cleanup model", selection: $prefs.cleanupModel) {
                         ForEach(Preferences.CleanupModel.allCases) { model in
@@ -82,7 +87,7 @@ struct SettingsView: View {
                         Text(cleanupStatus).foregroundStyle(cleanupStatusColor)
                     }
                 }
-                Text("Runs a local Llama-style model (llama.cpp / Metal GPU) to remove fillers + false starts, turn spoken numbers into digits, and fix punctuation — like Wispr Flow, fully offline. Adds ~0.3–1 s and downloads the model once.")
+                Text("Resolves self-corrections, turns spoken numbers into digits, and fixes punctuation — verbatim-first, so it keeps your exact words. Fully offline. Apple Intelligence runs on the Neural Engine with no download (macOS 26+); the Qwen models use llama.cpp and download once. See Cleanup Comparison in the menu to audit what it changed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

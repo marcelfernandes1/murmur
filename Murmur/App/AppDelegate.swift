@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         vocabulary: vocabulary
     )
     private lazy var historyWindow = HistoryWindowController(container: historyStore.container)
+    private lazy var comparisonWindow = CleanupComparisonWindowController(container: historyStore.container)
     private lazy var settingsWindow = SettingsWindowController(
         prefs: preferences,
         appState: appState,
@@ -35,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showHistory() {
         historyWindow.show()
+    }
+
+    func showComparison() {
+        comparisonWindow.show()
     }
 
     func showSettings() {
