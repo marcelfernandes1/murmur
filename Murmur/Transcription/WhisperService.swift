@@ -68,7 +68,23 @@ actor WhisperService: SpeechEngine {
         let notify = stateHandler
         let task = Task { () throws -> WhisperKit in
             notify?(.preparing)
-            let kit = try await WhisperKit(WhisperKitConfig(model: name))
+            // Load the encoder/decoder on the GPU rather than the Neural Engine.
+            // WhisperKit defaults both to `.cpuAndNeuralEngine`, which forces a
+            // cold ANE "specialization" on first use that can stall for minutes
+            // (it surfaced as the app hanging forever on "Transcribing…"). The
+            // GPU path loads instantly and runs fast on Apple Silicon.
+            let compute = ModelComputeOptions(
+                melCompute: .cpuAndGPU,
+                audioEncoderCompute: .cpuAndGPU,
+                textDecoderCompute: .cpuAndGPU,
+                prefillCompute: .cpuOnly
+            )
+            // `load: true` forces the model to fully load here, during the
+            // "Preparing model…" phase, so `.ready` is truthful. Without it
+            // WhisperKit only downloads and defers the heavy load into the first
+            // transcribe, where it looks like an endless transcription.
+            let config = WhisperKitConfig(model: name, computeOptions: compute, load: true)
+            let kit = try await WhisperKit(config)
             notify?(.ready)
             return kit
         }
