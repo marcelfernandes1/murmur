@@ -1,8 +1,8 @@
 import AVFoundation
 
 /// Captures microphone audio and converts it to the 16 kHz mono Float32 stream
-/// Whisper expects. Conversion happens live in the input tap so `stop()` can
-/// return the full sample buffer immediately.
+/// the speech engines expect. Conversion happens live in the input tap so
+/// `stop()` can return the full sample buffer immediately.
 final class AudioRecorder {
     enum RecorderError: LocalizedError {
         case permissionDenied
@@ -18,8 +18,7 @@ final class AudioRecorder {
         }
     }
 
-    /// Called on the audio thread with a 0...1-ish RMS level for metering.
-    /// (Phase 4 uses this to drive the notch waveform.)
+    /// Called on the audio thread with an RMS level for metering (drives the notch waveform).
     var onLevel: ((Float) -> Void)?
 
     private let engine = AVAudioEngine()
@@ -39,9 +38,17 @@ final class AudioRecorder {
         try await requestPermission()
         resetSamples()
 
+        // Defensive: never install a second tap on a bus that already has one
+        // (that throws an ObjC exception → SIGABRT). Always reset first.
+        if engine.isRunning { engine.stop() }
         let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        isTapped = false
+
         let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0 else { throw RecorderError.noInput }
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw RecorderError.noInput
+        }
 
         converter = AVAudioConverter(from: inputFormat, to: targetFormat)
 

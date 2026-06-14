@@ -26,13 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         dictation.bootstrap()
 
-        if ProcessInfo.processInfo.environment["MURMUR_BENCH"] != nil {
-            Task { await dictation.runBenchmark() }
-        }
-        if ProcessInfo.processInfo.environment["MURMUR_BENCH_CLEAN"] != nil {
-            Task { await dictation.runCleanupBenchmark() }
-        }
-
         // First launch: open Settings so the user can grant permissions.
         if !preferences.hasCompletedOnboarding {
             showSettings()

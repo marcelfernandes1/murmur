@@ -236,56 +236,6 @@ final class DictationController {
         }
     }
 
-    /// Diagnostic: transcribe a synthetic 15s buffer twice (cold + warm) and log
-    /// timings to a file (stdout is block-buffered when redirected). Triggered by
-    /// the MURMUR_BENCH env var.
-    func runBenchmark() async {
-        var out = ""
-        let path = "/tmp/murmur_bench_result.txt"
-        func log(_ s: String) {
-            out += "[\(Date())] \(s)\n"
-            try? out.write(toFile: path, atomically: true, encoding: .utf8)
-        }
-
-        log("bench start; building audio…")
-        let count = 16_000 * 15
-        var samples = [Float](repeating: 0, count: count)
-        for i in 0..<count {
-            samples[i] = 0.02 * sin(Float(i) * 2 * .pi * 220 / 16_000)
-        }
-        log("audio built (\(count) samples); pass 1 includes model load…")
-
-        for pass in 1...2 {
-            let start = Date()
-            let text = (try? await engine.transcribe(samples, language: "en", vocabulary: [])) ?? "<error>"
-            let elapsed = Date().timeIntervalSince(start)
-            log("pass \(pass): \(String(format: "%.2f", elapsed))s (RTF \(String(format: "%.1f", 15 / elapsed))x) -> \"\(text.prefix(40))\"")
-        }
-        log("done")
-    }
-
-    /// Diagnostic: run the cleanup LLM on a sample dirty transcript (cold + warm).
-    func runCleanupBenchmark() async {
-        var out = ""
-        let path = "/tmp/murmur_clean_result.txt"
-        func log(_ s: String) {
-            out += "[\(Date())] \(s)\n"
-            try? out.write(toFile: path, atomically: true, encoding: .utf8)
-        }
-        let testCleaner = LLMCleaner(repo: Preferences.CleanupModel.qwen3B.repo, fileName: Preferences.CleanupModel.qwen3B.fileName)
-        let sample = "Okay so now I'm testing um the Parakeet by NVIDIA again and uh while I'm watching the game now in twenty twenty six. Um whereas in OpenAI's Whisper they it doesn't do that."
-        log("loading cleanup model + cleaning (cold)…")
-        for pass in 1...2 {
-            let start = Date()
-            let cleaned = await testCleaner.clean(sample)
-            let elapsed = Date().timeIntervalSince(start)
-            log("pass \(pass) (\(String(format: "%.2f", elapsed))s):")
-            if pass == 1 { log("IN : \(sample)") }
-            log("OUT: \(cleaned)")
-        }
-        log("done")
-    }
-
     private func deliver(_ text: String) {
         guard !text.isEmpty else {
             notch.dismiss()
