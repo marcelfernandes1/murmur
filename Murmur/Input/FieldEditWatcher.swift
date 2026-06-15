@@ -23,6 +23,10 @@ final class FieldEditWatcher {
     private let settleDelay: Duration = .milliseconds(350)   // let the synthetic ⌘V land first
     private let pollInterval: Duration = .milliseconds(550)
     private let maxTicks = 55                                 // ~30s watch window, then give up
+    // How long the edited text must stay unchanged before we treat the edit as
+    // finished and learn from it. Kept generously long so a mid-edit pause
+    // (thinking, retyping a word) doesn't get mistaken for a completed edit.
+    private let editSettleDuration: Duration = .seconds(3)
 
     /// Begin watching the currently-focused field for an edit to `insertedText`.
     func start(insertedText: String) {
@@ -32,6 +36,10 @@ final class FieldEditWatcher {
         let settle = settleDelay
         let interval = pollInterval
         let maxTicks = maxTicks
+        // Number of consecutive unchanged polls required before an edit is
+        // considered settled (rounded up so we always cover editSettleDuration).
+        let requiredStableTicks = max(
+            1, Int((Self.seconds(editSettleDuration) / Self.seconds(interval)).rounded(.up)))
         pollTask = Task { [weak self] in
             try? await Task.sleep(for: settle)
             guard let self, !Task.isCancelled else { Self.diag("aborted before snapshot"); return }
@@ -42,6 +50,7 @@ final class FieldEditWatcher {
             Self.diag("snapshot ok: baselineLen=\(self.baseline.count) insertedRange=\(self.insertedRange.map { "\($0)" } ?? "nil") baseline=“\(self.baseline.prefix(80))”")
 
             var lastValue = self.baseline
+            var stableTicks = 0
             var ticks = 0
             while !Task.isCancelled, ticks < maxTicks, let el = self.element {
                 try? await Task.sleep(for: interval)
@@ -50,21 +59,29 @@ final class FieldEditWatcher {
                 guard let current = Self.stringValue(of: el) else { Self.diag("value unreadable at tick \(ticks) — stopping"); break }
                 if current == self.baseline {
                     lastValue = current
+                    stableTicks = 0
                     continue
                 }
-                // Wait for typing to settle (value unchanged across one interval)
-                // before judging it — otherwise we'd diff a half-typed word.
+                // Wait for the edit to settle before judging it: the value must
+                // stay unchanged for editSettleDuration (requiredStableTicks
+                // consecutive polls). A brief mid-edit pause resets the counter,
+                // so we don't learn from a half-finished correction.
                 if current == lastValue {
-                    let candidate = CorrectionDetector.candidate(
-                        before: self.baseline, after: current, insertedRange: self.insertedRange)
-                    if let candidate {
-                        Self.diag("CANDIDATE found: “\(candidate.heard)” → “\(candidate.corrected)”")
-                        self.onCorrection?(candidate)
-                        self.cancel()
-                        return
-                    } else {
-                        Self.diag("edit settled but NO candidate. before=“\(self.baseline.prefix(80))” after=“\(current.prefix(80))” range=\(self.insertedRange.map { "\($0)" } ?? "nil")")
+                    stableTicks += 1
+                    if stableTicks >= requiredStableTicks {
+                        let candidate = CorrectionDetector.candidate(
+                            before: self.baseline, after: current, insertedRange: self.insertedRange)
+                        if let candidate {
+                            Self.diag("CANDIDATE found after \(stableTicks) stable ticks: “\(candidate.heard)” → “\(candidate.corrected)”")
+                            self.onCorrection?(candidate)
+                            self.cancel()
+                            return
+                        } else {
+                            Self.diag("edit settled but NO candidate. before=“\(self.baseline.prefix(80))” after=“\(current.prefix(80))” range=\(self.insertedRange.map { "\($0)" } ?? "nil")")
+                        }
                     }
+                } else {
+                    stableTicks = 0
                 }
                 lastValue = current
             }
@@ -123,6 +140,12 @@ final class FieldEditWatcher {
         }
         let found = ns.range(of: insertedText, options: .backwards)
         return found.location == NSNotFound ? nil : found
+    }
+
+    /// A `Duration` as a `Double` count of seconds (used to size the poll loop).
+    private static func seconds(_ duration: Duration) -> Double {
+        let c = duration.components
+        return Double(c.seconds) + Double(c.attoseconds) / 1e18
     }
 
     // MARK: - AX reads

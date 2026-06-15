@@ -98,13 +98,20 @@ enum CorrectionDetector {
     /// to block clearly-unrelated swaps (John → Michael) that would corrupt future
     /// transcripts via the replacement rule; everything with a real relationship
     /// to the heard word, or any obvious term shape, is accepted.
-    static func isPlausibleMishearing(heard: String, corrected: String) -> Bool {
+    ///
+    /// `allowStrongTermShortcut` accepts any acronym/CamelCase/alphanumeric target
+    /// outright, sounds-alike or not. That's right when the user *deliberately*
+    /// typed the term (the learn path), but dangerous when *generalizing* a learned
+    /// term onto brand-new transcript tokens: it would map any ALL-CAPS token ("PR",
+    /// "AI", "OK") onto a CamelCase term like "SupaBase". The generalization pass
+    /// passes `false` so it still requires a genuine phonetic/spelling match.
+    static func isPlausibleMishearing(heard: String, corrected: String, allowStrongTermShortcut: Bool = true) -> Bool {
         let a = heard.lowercased()
         let b = corrected.lowercased()
         if a == b { return true }                              // pure capitalization / casing fix (openai → OpenAI)
         // Acronyms / CamelCase / alphanumeric jargon are unambiguous deliberate
         // terms — accept regardless of how close they sound (gpt-four → GPT-4).
-        if isStrongTerm(corrected) { return true }
+        if allowStrongTermShortcut, isStrongTerm(corrected) { return true }
         let distance = levenshtein(a, b)
         let ratio = 1.0 - Double(distance) / Double(max(a.count, b.count))
         if ratio >= 0.34 { return true }                       // roughly-related spelling (clod ≈ Claude)
