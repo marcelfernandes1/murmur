@@ -12,6 +12,9 @@ struct SettingsView: View {
 
     @State private var newTerm = ""
     @State private var inputDevices: [AudioInputDevice] = []
+    @State private var editingCorrectionID: LearnedCorrection.ID?
+    @State private var editHeard = ""
+    @State private var editCorrected = ""
 
     var body: some View {
         @Bindable var prefs = prefs
@@ -145,19 +148,44 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(corrections.corrections) { correction in
-                        HStack(spacing: 6) {
-                            Text(correction.heard)
-                                .foregroundStyle(.secondary)
-                            Image(systemName: "arrow.right")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Text(correction.corrected)
-                            Spacer()
-                            Button { corrections.remove(correction) } label: {
-                                Image(systemName: "minus.circle.fill")
+                        if editingCorrectionID == correction.id {
+                            HStack(spacing: 6) {
+                                TextField("Heard", text: $editHeard)
+                                    .textFieldStyle(.roundedBorder)
+                                    .onSubmit { commitEdit(correction) }
+                                Image(systemName: "arrow.right")
+                                    .font(.caption2)
                                     .foregroundStyle(.secondary)
+                                TextField("Corrected", text: $editCorrected)
+                                    .textFieldStyle(.roundedBorder)
+                                    .onSubmit { commitEdit(correction) }
+                                Button("Save") { commitEdit(correction) }
+                                    .disabled(
+                                        editHeard.trimmingCharacters(in: .whitespaces).isEmpty
+                                            || editCorrected.trimmingCharacters(in: .whitespaces).isEmpty
+                                    )
+                                Button("Cancel") { editingCorrectionID = nil }
                             }
-                            .buttonStyle(.plain)
+                        } else {
+                            HStack(spacing: 6) {
+                                Text(correction.heard)
+                                    .foregroundStyle(.secondary)
+                                Image(systemName: "arrow.right")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Text(correction.corrected)
+                                Spacer()
+                                Button { startEditing(correction) } label: {
+                                    Image(systemName: "pencil")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                Button { corrections.remove(correction) } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
                 }
@@ -217,6 +245,17 @@ struct SettingsView: View {
     private func addTerm() {
         vocabulary.add(newTerm)
         newTerm = ""
+    }
+
+    private func startEditing(_ correction: LearnedCorrection) {
+        editingCorrectionID = correction.id
+        editHeard = correction.heard
+        editCorrected = correction.corrected
+    }
+
+    private func commitEdit(_ correction: LearnedCorrection) {
+        corrections.update(correction, heard: editHeard, corrected: editCorrected)
+        editingCorrectionID = nil
     }
 
     @ViewBuilder
