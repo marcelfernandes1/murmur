@@ -62,20 +62,20 @@ final class AudioRecorder {
             throw RecorderError.noInput
         }
 
-        // The converter's job is sample-rate only: input(mono, e.g. 48k) → 16k mono.
-        // We downmix the tap's (possibly multi-channel) buffers to mono ourselves
-        // first, because AVAudioConverter's own N→mono downmix yields silence when
-        // the device's format carries no channel layout (aggregate/virtual devices).
-        let monoInput = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: inputFormat.sampleRate,
-            channels: 1,
-            interleaved: false
-        )!
-        monoInputFormat = monoInput
-        converter = AVAudioConverter(from: monoInput, to: targetFormat)
+        // The converter is built lazily in `process()` from the tap buffer's
+        // ACTUAL format (see below). Reset it so a stale converter from a prior
+        // device/format never gets reused.
+        converter = nil
+        monoInputFormat = nil
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+        // Install with `format: nil` so the engine taps the input node's own
+        // current format. Passing an explicit format requires it to exactly match
+        // the node's live hardware format — but `outputFormat(forBus:)` can report
+        // a stale/mismatched format after a default-device change (AirPods) or raw
+        // AudioUnit device switching, and the mismatch makes `installTap` raise an
+        // ObjC exception → SIGABRT. `nil` is always self-consistent and can't throw
+        // that assertion.
+        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
             self?.process(buffer)
         }
         isTapped = true
@@ -123,9 +123,29 @@ final class AudioRecorder {
     }
 
     private func process(_ buffer: AVAudioPCMBuffer) {
-        guard let converter, let monoFormat = monoInputFormat else { return }
         let frames = Int(buffer.frameLength)
         guard frames > 0, let srcData = buffer.floatChannelData else { return }
+
+        // Build (or rebuild) the sample-rate converter from the tap buffer's
+        // ACTUAL format. Because the tap is installed with `format: nil`, buffers
+        // arrive in the input node's real format — which may differ from whatever
+        // `outputFormat(forBus:)` reported at setup, and can even change mid-stream
+        // on a device switch. The converter only does sample-rate (mono → 16k mono);
+        // we downmix channels ourselves below, because AVAudioConverter's own
+        // N→mono downmix yields silence when the device's format carries no channel
+        // layout (aggregate/virtual devices).
+        let inputRate = buffer.format.sampleRate
+        if converter == nil || monoInputFormat?.sampleRate != inputRate {
+            guard inputRate > 0, let mono = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: inputRate,
+                channels: 1,
+                interleaved: false
+            ) else { return }
+            monoInputFormat = mono
+            converter = AVAudioConverter(from: mono, to: targetFormat)
+        }
+        guard let converter, let monoFormat = monoInputFormat else { return }
 
         // 1) Reduce the tap buffer (any channel count) to mono ourselves, taking
         //    the loudest channel. For a normal 1-channel mic this is a passthrough;
