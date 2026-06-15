@@ -95,6 +95,11 @@ final class Preferences {
         didSet { defaults.set(language.rawValue, forKey: Keys.language) }
     }
 
+    /// UID of the chosen microphone, or nil to follow the macOS default input.
+    var inputDeviceUID: String? {
+        didSet { defaults.set(inputDeviceUID, forKey: Keys.inputDeviceUID) }
+    }
+
     /// Use the Fn / 🌐 key as a trigger (in addition to any custom shortcuts).
     var fnTriggerEnabled: Bool {
         didSet { defaults.set(fnTriggerEnabled, forKey: Keys.fnTrigger) }
@@ -120,6 +125,12 @@ final class Preferences {
         didSet { defaults.set(cleanupModel.rawValue, forKey: Keys.cleanupModel) }
     }
 
+    /// Learn a correction when you edit a word in text Murmur just inserted
+    /// (Wispr-style "word learned"). Needs Accessibility.
+    var autoLearnFromEdits: Bool {
+        didSet { defaults.set(autoLearnFromEdits, forKey: Keys.autoLearn) }
+    }
+
     var launchAtLogin: Bool {
         didSet {
             guard launchAtLogin != oldValue else { return }
@@ -139,6 +150,7 @@ final class Preferences {
         model = ModelChoice(rawValue: defaults.string(forKey: Keys.model) ?? "") ?? .turbo
 
         language = Language(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? .auto
+        inputDeviceUID = defaults.string(forKey: Keys.inputDeviceUID)
         fnTriggerEnabled = defaults.object(forKey: Keys.fnTrigger) == nil
             ? true
             : defaults.bool(forKey: Keys.fnTrigger)
@@ -149,6 +161,9 @@ final class Preferences {
         smartCleanup = defaults.bool(forKey: Keys.smartCleanup)
         let storedCleanup = defaults.string(forKey: Keys.cleanupModel) ?? ""
         cleanupModel = CleanupModel(rawValue: storedCleanup) ?? .qwen1_5B
+        autoLearnFromEdits = defaults.object(forKey: Keys.autoLearn) == nil
+            ? true
+            : defaults.bool(forKey: Keys.autoLearn)
         launchAtLogin = (SMAppService.mainApp.status == .enabled)
         hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)
 
@@ -165,11 +180,13 @@ final class Preferences {
     private enum Keys {
         static let model = "whisperModel"
         static let language = "language"
+        static let inputDeviceUID = "inputDeviceUID"
         static let fnTrigger = "fnTriggerEnabled"
         static let streaming = "streamingEnabled"
         static let removeFillers = "removeFillers"
         static let smartCleanup = "smartCleanup"
         static let cleanupModel = "cleanupModel"
+        static let autoLearn = "autoLearnFromEdits"
         static let onboarded = "hasCompletedOnboarding"
         static let migratedTurboV2 = "migratedToTurboV2"
     }

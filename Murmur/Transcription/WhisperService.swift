@@ -27,7 +27,14 @@ actor WhisperService: SpeechEngine {
         var options = DecodingOptions()
         // Speed: timestamps ~double decode steps, and capping fallbacks avoids
         // re-decoding borderline segments up to 5×.
-        options.withoutTimestamps = true
+        //
+        // BUT: WhisperKit decodes in 30s windows and relies on segment timestamps
+        // to seek to the next window. With `withoutTimestamps = true` it can't
+        // advance past the first window, so audio longer than ~30s gets truncated
+        // (the "it cut off what I said" bug). So we only take the fast no-timestamps
+        // path for short clips; longer audio keeps timestamps for correct long-form.
+        let longAudio = samples.count > 28 * 16_000   // ~28s of 16 kHz mono
+        options.withoutTimestamps = !longAudio
         options.wordTimestamps = false
         options.temperatureFallbackCount = 1
         if let language {
@@ -46,10 +53,20 @@ actor WhisperService: SpeechEngine {
         }
 
         let results = try await pipe.transcribe(audioArray: samples, decodeOptions: options)
-        return results
+        let transcript = results
             .map(\.text)
             .joined()
             .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // TEMP DIAGNOSTIC — confirm long audio isn't being truncated.
+        let line = "WHISPER in=\(samples.count) (\(samples.count / 16_000)s) timestamps=\(longAudio ? "on" : "off") segments=\(results.count) outChars=\(transcript.count)\n"
+        let url = URL(fileURLWithPath: "/tmp/murmur_audio.log")
+        if let data = line.data(using: .utf8) {
+            if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(data); try? h.close() }
+            else { try? data.write(to: url) }
+        }
+
+        return transcript
     }
 
     private func loadPipe() async throws -> WhisperKit {

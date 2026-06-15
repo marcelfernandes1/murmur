@@ -52,6 +52,14 @@ struct DictationNotchView: View {
             Text(message)
                 .font(.system(size: 13, weight: .medium))
 
+        case .learned(let term):
+            Image(systemName: "sparkles")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.yellow)
+            Text("Learned “\(term)”")
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+
         case .error(let message):
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 13, weight: .semibold))

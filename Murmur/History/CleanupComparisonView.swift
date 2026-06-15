@@ -1,10 +1,10 @@
 import SwiftUI
 import SwiftData
 
-/// Side-by-side audit of what smart cleanup changed: your words (raw ASR with
-/// basic fillers removed) vs. the cleaned output, with a word-level diff so
-/// over-editing is obvious at a glance. Only shows dictations where cleanup ran
-/// and actually changed something.
+/// Side-by-side audit of every dictation: your raw words (ASR output) vs. the
+/// final delivered text, with a word-level diff so any cleanup/correction — or
+/// the absence of one — is obvious at a glance. Shows one row per dictation,
+/// including ones where nothing changed (identical columns).
 struct CleanupComparisonView: View {
     @Query(
         filter: #Predicate<Transcript> { $0.original != nil },
@@ -17,7 +17,7 @@ struct CleanupComparisonView: View {
                 ContentUnavailableView {
                     Label("Nothing to compare yet", systemImage: "text.magnifyingglass")
                 } description: {
-                    Text("Dictate with smart cleanup on. Each result shows your words vs. what cleanup produced.")
+                    Text("Dictate something. Each result shows your raw words vs. the final delivered text.")
                 }
             } else {
                 ScrollView {

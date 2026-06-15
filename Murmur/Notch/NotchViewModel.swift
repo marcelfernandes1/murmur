@@ -10,6 +10,7 @@ final class NotchViewModel {
         case listening
         case transcribing
         case done(String)
+        case learned(String)
         case error(String?)
     }
 

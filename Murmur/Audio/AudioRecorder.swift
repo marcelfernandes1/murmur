@@ -1,4 +1,6 @@
 import AVFoundation
+import AudioToolbox
+import CoreAudio
 
 /// Captures microphone audio and converts it to the 16 kHz mono Float32 stream
 /// the speech engines expect. Conversion happens live in the input tap so
@@ -21,8 +23,14 @@ final class AudioRecorder {
     /// Called on the audio thread with an RMS level for metering (drives the notch waveform).
     var onLevel: ((Float) -> Void)?
 
+    /// UID of the input device to record from, or nil to follow the system default.
+    var preferredDeviceUID: String?
+
     private let engine = AVAudioEngine()
     private var converter: AVAudioConverter?
+    /// Mono version of the input format (input sample rate, 1 ch) — the converter
+    /// only does sample-rate conversion; we downmix channels ourselves.
+    private var monoInputFormat: AVAudioFormat?
     private let lock = NSLock()
     private var samples: [Float] = []
     private var isTapped = false
@@ -45,12 +53,27 @@ final class AudioRecorder {
         input.removeTap(onBus: 0)
         isTapped = false
 
+        // Route to the chosen input device before querying its format. Must
+        // happen while the engine is stopped and before the node is pulled.
+        applyPreferredInputDevice(to: input)
+
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw RecorderError.noInput
         }
 
-        converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+        // The converter's job is sample-rate only: input(mono, e.g. 48k) → 16k mono.
+        // We downmix the tap's (possibly multi-channel) buffers to mono ourselves
+        // first, because AVAudioConverter's own N→mono downmix yields silence when
+        // the device's format carries no channel layout (aggregate/virtual devices).
+        let monoInput = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: inputFormat.sampleRate,
+            channels: 1,
+            interleaved: false
+        )!
+        monoInputFormat = monoInput
+        converter = AVAudioConverter(from: monoInput, to: targetFormat)
 
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             self?.process(buffer)
@@ -60,6 +83,28 @@ final class AudioRecorder {
         engine.prepare()
         try engine.start()
     }
+
+    /// Point the engine's input node at `preferredDeviceUID` (if set and still
+    /// present). On failure it silently leaves the system default in place.
+    private func applyPreferredInputDevice(to input: AVAudioInputNode) {
+        guard let uid = preferredDeviceUID,
+              let deviceID = AudioDevices.deviceID(forUID: uid),
+              let unit = input.audioUnit else { return }
+        var device = deviceID
+        AudioUnitSetProperty(
+            unit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &device,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+    }
+
+    /// Largest absolute sample amplitude seen since the last `start()`. Used to
+    /// distinguish a working mic from a silent one (unauthorized/muted/wrong
+    /// device all deliver digital silence → peak ≈ 0).
+    private(set) var peakAmplitude: Float = 0
 
     /// A snapshot of audio captured so far, without stopping (used for streaming).
     func currentSamples() -> [Float] {
@@ -78,10 +123,38 @@ final class AudioRecorder {
     }
 
     private func process(_ buffer: AVAudioPCMBuffer) {
-        guard let converter else { return }
+        guard let converter, let monoFormat = monoInputFormat else { return }
+        let frames = Int(buffer.frameLength)
+        guard frames > 0, let srcData = buffer.floatChannelData else { return }
 
-        let ratio = targetFormat.sampleRate / buffer.format.sampleRate
-        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
+        // 1) Reduce the tap buffer (any channel count) to mono ourselves, taking
+        //    the loudest channel. For a normal 1-channel mic this is a passthrough;
+        //    for a multi-channel aggregate/virtual device it isolates the channel
+        //    actually carrying the mic. (We must do this rather than let
+        //    AVAudioConverter downmix N→1: it silently outputs zeros when the
+        //    device's format has no channel layout — which read as a dead mic.)
+        guard let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
+              let dst = mono.floatChannelData?[0] else { return }
+        mono.frameLength = buffer.frameLength
+        let channelCount = Int(buffer.format.channelCount)
+        let interleaved = buffer.format.isInterleaved
+        func sample(_ channel: Int, _ frame: Int) -> Float {
+            interleaved ? srcData[0][frame * channelCount + channel] : srcData[channel][frame]
+        }
+        var bestChannel = 0
+        if channelCount > 1 {
+            var bestEnergy: Float = -1
+            for c in 0..<channelCount {
+                var energy: Float = 0
+                for f in 0..<frames { let v = sample(c, f); energy += v * v }
+                if energy > bestEnergy { bestEnergy = energy; bestChannel = c }
+            }
+        }
+        for f in 0..<frames { dst[f] = sample(bestChannel, f) }
+
+        // 2) Sample-rate convert the mono buffer to 16 kHz.
+        let ratio = targetFormat.sampleRate / monoFormat.sampleRate
+        let capacity = AVAudioFrameCount(Double(frames) * ratio) + 16
         guard let out = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
 
         var fed = false
@@ -93,24 +166,30 @@ final class AudioRecorder {
             }
             fed = true
             status.pointee = .haveData
-            return buffer
+            return mono
         }
 
         guard let channel = out.floatChannelData, out.frameLength > 0 else { return }
-        let frames = Int(out.frameLength)
-        let slice = UnsafeBufferPointer(start: channel[0], count: frames)
+        let outFrames = Int(out.frameLength)
+        let slice = UnsafeBufferPointer(start: channel[0], count: outFrames)
 
         var sumSquares: Float = 0
-        for value in slice { sumSquares += value * value }
-        let rms = (sumSquares / Float(frames)).squareRoot()
-        onLevel?(rms)
+        var localPeak: Float = 0
+        for value in slice {
+            sumSquares += value * value
+            localPeak = max(localPeak, abs(value))
+        }
+        let rms = (sumSquares / Float(outFrames)).squareRoot()
+        if localPeak > peakAmplitude { peakAmplitude = localPeak }
 
+        onLevel?(rms)
         append(slice)
     }
 
     // MARK: - Synchronous sample buffer access (lock never held across a suspension)
 
     private func resetSamples() {
+        peakAmplitude = 0
         lock.lock()
         samples.removeAll(keepingCapacity: true)
         lock.unlock()

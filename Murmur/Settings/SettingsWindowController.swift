@@ -10,12 +10,14 @@ final class SettingsWindowController {
     private let appState: AppState
     private let dictation: DictationController
     private let vocabulary: VocabularyStore
+    private let corrections: CorrectionStore
 
-    init(prefs: Preferences, appState: AppState, dictation: DictationController, vocabulary: VocabularyStore) {
+    init(prefs: Preferences, appState: AppState, dictation: DictationController, vocabulary: VocabularyStore, corrections: CorrectionStore) {
         self.prefs = prefs
         self.appState = appState
         self.dictation = dictation
         self.vocabulary = vocabulary
+        self.corrections = corrections
     }
 
     func show() {
@@ -25,6 +27,7 @@ final class SettingsWindowController {
                 .environment(appState)
                 .environment(dictation)
                 .environment(vocabulary)
+                .environment(corrections)
             let hosting = NSHostingController(rootView: root)
             let win = NSWindow(contentViewController: hosting)
             win.title = "Murmur Settings"

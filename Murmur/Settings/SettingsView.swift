@@ -8,8 +8,10 @@ struct SettingsView: View {
     @Environment(AppState.self) private var appState
     @Environment(DictationController.self) private var dictation
     @Environment(VocabularyStore.self) private var vocabulary
+    @Environment(CorrectionStore.self) private var corrections
 
     @State private var newTerm = ""
+    @State private var inputDevices: [AudioInputDevice] = []
 
     var body: some View {
         @Bindable var prefs = prefs
@@ -30,6 +32,19 @@ struct SettingsView: View {
                     actionLabel: "Open Settings",
                     action: { dictation.enableAccessibility() }
                 )
+            }
+
+            Section("Microphone") {
+                Picker("Input device", selection: $prefs.inputDeviceUID) {
+                    Text("System Default").tag(String?.none)
+                    ForEach(inputDevices) { device in
+                        Text(device.name).tag(String?.some(device.uid))
+                    }
+                }
+                Button("Refresh devices") { inputDevices = AudioDevices.inputDevices() }
+                Text("Which microphone Murmur records from. “System Default” follows System Settings ▸ Sound. If the waveform stays flat, the mic is delivering silence — try a specific device here, and confirm Murmur is enabled in System Settings ▸ Privacy & Security ▸ Microphone.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Triggers") {
@@ -119,6 +134,35 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Learned words") {
+                Toggle("Learn corrections when I edit dictated text", isOn: $prefs.autoLearnFromEdits)
+                Text("When you fix a name, acronym, or term in text Murmur typed, it remembers the correction and applies it next time — and flashes “Learned …”. Needs Accessibility. Only names/acronyms/jargon that sound like what was heard are learned.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if corrections.corrections.isEmpty {
+                    Text("Nothing learned yet. Edit a word Murmur got wrong and it'll show up here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(corrections.corrections) { correction in
+                        HStack(spacing: 6) {
+                            Text(correction.heard)
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "arrow.right")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text(correction.corrected)
+                            Spacer()
+                            Button { corrections.remove(correction) } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
             Section("General") {
                 Toggle("Launch at login", isOn: $prefs.launchAtLogin)
             }
@@ -129,7 +173,11 @@ struct SettingsView: View {
         .onChange(of: prefs.model) { dictation.applyModel() }
         .onChange(of: prefs.smartCleanup) { dictation.applyCleanup() }
         .onChange(of: prefs.cleanupModel) { dictation.applyCleanup() }
-        .onAppear { dictation.refreshPermissions() }
+        .onChange(of: prefs.inputDeviceUID) { dictation.applyInputDevice() }
+        .onAppear {
+            dictation.refreshPermissions()
+            inputDevices = AudioDevices.inputDevices()
+        }
     }
 
     private var cleanupStatus: String {
