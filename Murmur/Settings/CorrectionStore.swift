@@ -143,7 +143,8 @@ final class CorrectionStore {
             // …that plausibly mishears a learned term → swap it in.
             if let target = targets.first(where: {
                 $0.caseInsensitiveCompare(token) != .orderedSame
-                    && CorrectionDetector.isPlausibleMishearing(heard: token, corrected: $0)
+                    && CorrectionDetector.isPlausibleMishearing(
+                        heard: token, corrected: $0, allowStrongTermShortcut: false)
             }) {
                 result.replaceCharacters(in: match.range, with: target)
             }
