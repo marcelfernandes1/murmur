@@ -49,6 +49,12 @@ private struct MenuBarContent: View {
             }
         }
 
+        if let learned = appState.recentlyLearned {
+            Button("Undo learned “\(learned.corrected)”") {
+                dictation.undoLastLearned()
+            }
+        }
+
         Divider()
 
         Button("History…") { showHistory() }

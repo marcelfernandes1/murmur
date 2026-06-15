@@ -13,7 +13,12 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     PRODUCT_BUNDLE_IDENTIFIER: com.murmur.app
     ENABLE_HARDENED_RUNTIME: "YES"
-    CODE_SIGN_STYLE: Automatic
+    # Sign with a stable Development identity (not ad-hoc) so macOS keeps the
+    # Accessibility/Microphone grants across rebuilds instead of re-prompting.
+    DEVELOPMENT_TEAM: M8KUF8S2L5
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: 78E02B12F2833D1842B84B38E7A5FF0D2E492344
+    PROVISIONING_PROFILE_SPECIFIER: ""
     COMBINE_HIDPI_IMAGES: "YES"
 
 # Third-party SPM packages (added per-phase to keep each build green).

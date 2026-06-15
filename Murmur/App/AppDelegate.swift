@@ -7,13 +7,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     let preferences = Preferences()
     let vocabulary = VocabularyStore()
+    let corrections = CorrectionStore()
     let historyStore = HistoryStore()
 
     private(set) lazy var dictation = DictationController(
         appState: appState,
         history: historyStore,
         preferences: preferences,
-        vocabulary: vocabulary
+        vocabulary: vocabulary,
+        corrections: corrections
     )
     private lazy var historyWindow = HistoryWindowController(container: historyStore.container)
     private lazy var comparisonWindow = CleanupComparisonWindowController(container: historyStore.container)
@@ -21,7 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         prefs: preferences,
         appState: appState,
         dictation: dictation,
-        vocabulary: vocabulary
+        vocabulary: vocabulary,
+        corrections: corrections
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {

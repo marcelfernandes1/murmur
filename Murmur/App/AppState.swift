@@ -40,6 +40,10 @@ final class AppState {
     /// Phase 1; the History view supersedes this in Phase 3).
     var lastTranscript: String = ""
 
+    /// The word just auto-learned from an edit, kept briefly so the menu can
+    /// offer an undo. Cleared after a short window or once undone.
+    var recentlyLearned: LearnedCorrection?
+
     var versionString: String {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
         return "v\(short)"

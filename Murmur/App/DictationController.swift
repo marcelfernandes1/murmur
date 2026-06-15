@@ -11,23 +11,27 @@ final class DictationController {
     private let appState: AppState
     private let preferences: Preferences
     private let vocabulary: VocabularyStore
+    private let corrections: CorrectionStore
     private let recorder = AudioRecorder()
     private var engine: SpeechEngine
     private let hotkeys = HotkeyManager()
     private let accessibility = AccessibilityManager()
     private let notch = NotchController()
     private let history: HistoryStore
+    private let editWatcher = FieldEditWatcher()
     private var cleaner: any TextCleaner
 
     private var isRecording = false
     private var awaitingResult = false
     private var streamTask: Task<Void, Never>?
+    private var undoClearTask: Task<Void, Never>?
 
-    init(appState: AppState, history: HistoryStore, preferences: Preferences, vocabulary: VocabularyStore) {
+    init(appState: AppState, history: HistoryStore, preferences: Preferences, vocabulary: VocabularyStore, corrections: CorrectionStore) {
         self.appState = appState
         self.history = history
         self.preferences = preferences
         self.vocabulary = vocabulary
+        self.corrections = corrections
         self.engine = Self.makeEngine(for: preferences.model)
         self.cleaner = Self.makeCleaner(for: preferences.cleanupModel)
     }
@@ -61,6 +65,17 @@ final class DictationController {
         recorder.onLevel = { [weak self] level in
             DispatchQueue.main.async { self?.notch.updateLevel(level) }
         }
+        recorder.preferredDeviceUID = preferences.inputDeviceUID
+
+        editWatcher.onCorrection = { [weak self] candidate in
+            self?.learn(candidate)
+        }
+
+        // Sanity-check correction detection from the CLI (mirrors MURMUR_BENCH):
+        // `MURMUR_TEST_CORRECTIONS=1 open Murmur.app` prints PASS/FAIL to the log.
+        if ProcessInfo.processInfo.environment["MURMUR_TEST_CORRECTIONS"] != nil {
+            CorrectionDetector.runSelfTest()
+        }
 
         attachStateHandler(to: engine)
         if preferences.smartCleanup { attachCleanupHandler() }
@@ -84,6 +99,11 @@ final class DictationController {
         let newEngine = Self.makeEngine(for: preferences.model)
         engine = newEngine
         attachStateHandler(to: newEngine)
+    }
+
+    /// Apply the chosen microphone (takes effect on the next recording).
+    func applyInputDevice() {
+        recorder.preferredDeviceUID = preferences.inputDeviceUID
     }
 
     /// Rebuild + (re)load the cleanup backend for the current preference.
@@ -160,6 +180,8 @@ final class DictationController {
     private func beginRecording() {
         guard !isRecording else { return }
         isRecording = true
+        // A new dictation supersedes watching the previous field for edits.
+        editWatcher.cancel()
         // The notch live preview only makes sense on a fast, non-autoregressive
         // engine. With Whisper, repeatedly transcribing the growing buffer is
         // O(n²) and starves the final transcription — so we skip it there and just
@@ -190,7 +212,7 @@ final class DictationController {
     /// preview in the notch. Passes serialize on the WhisperService actor.
     private func startStreamingLoop() {
         let language = preferences.language.code
-        let vocab = vocabulary.terms
+        let vocab = biasVocabulary()
         streamTask?.cancel()
         streamTask = Task {
             while isRecording {
@@ -216,6 +238,16 @@ final class DictationController {
         streamTask = nil
 
         let samples = recorder.stop()
+
+        // A working mic always has some noise floor; essentially-zero peak means
+        // the input delivered digital silence (no Mic permission, a muted/wrong
+        // device, etc.). Transcribing that is pointless — flag it instead.
+        if !samples.isEmpty && recorder.peakAmplitude < 0.0005 {
+            appState.status = .error("No microphone signal")
+            notch.showError("No mic signal — check input & permission")
+            return
+        }
+
         awaitingResult = true
         appState.status = .transcribing
         if appState.modelPhase == .ready {
@@ -229,9 +261,11 @@ final class DictationController {
                 var text = try await engine.transcribe(
                     samples,
                     language: preferences.language.code,
-                    vocabulary: vocabulary.terms
+                    vocabulary: biasVocabulary()
                 )
-                var original: String? = nil
+                // The exact ASR output, recorded for the comparison screen so it
+                // shows every dictation (raw vs. final) — even when nothing changed.
+                let rawTranscript = text
                 if preferences.smartCleanup {
                     notch.showPreparing("Polishing…")
                     // Strip basic fillers deterministically FIRST (instant, 100% reliable
@@ -241,7 +275,6 @@ final class DictationController {
                     // contextual fillers like "you know"/"like"). Fewer reasons for it to
                     // "fix" things means less over-editing.
                     if preferences.removeFillers { text = TranscriptCleaner.removeFillers(text) }
-                    original = text // the exact input to the LLM, for the comparison screen
                     let cleaned = await cleaner.clean(text)
                     // Reject refusals / "answers" so a guardrailed model can never
                     // paste "As an LLM I cannot…" into your text in place of cleanup.
@@ -249,7 +282,10 @@ final class DictationController {
                 } else if preferences.removeFillers {
                     text = TranscriptCleaner.removeFillers(text)
                 }
-                deliver(text, original: original)
+                // Apply previously-learned corrections last, so they reliably win
+                // over whatever the recognizer/cleanup produced.
+                text = corrections.apply(to: text)
+                deliver(text, original: rawTranscript)
                 appState.status = .idle
             } catch {
                 appState.status = .error(error.localizedDescription)
@@ -265,9 +301,9 @@ final class DictationController {
             return
         }
         appState.lastTranscript = text
-        // Only record `original` when it actually differs from the delivered text,
-        // so the comparison screen highlights real edits (not no-ops).
-        history.add(text, original: original != text ? original : nil)
+        // Always record the raw transcript so the comparison screen has an entry
+        // for every dictation — identical columns when nothing was changed.
+        history.add(text, original: original)
 
         appState.accessibilityEnabled = accessibility.isTrusted
         let canInsert = accessibility.isTrusted
@@ -277,9 +313,55 @@ final class DictationController {
         if canInsert {
             TextInserter.paste(text)
             notch.finish(message: "Inserted")
+            // Watch the field for the user correcting a word, so we can learn it.
+            FieldEditWatcher.diag("deliver: pasted, autoLearnFromEdits=\(preferences.autoLearnFromEdits)")
+            if preferences.autoLearnFromEdits {
+                editWatcher.start(insertedText: text)
+            }
         } else {
+            FieldEditWatcher.diag("deliver: NOT inserted (canInsert=false) → copied, no watcher. trusted=\(accessibility.isTrusted) secureInput=\(accessibility.isSecureInputActive) editableFocused=\(accessibility.isEditableFieldFocused())")
             TextInserter.copyToClipboard(text)
             notch.finish(message: "Copied")
         }
+    }
+
+    // MARK: - Learning from edits
+
+    /// The recognizer bias list: manual vocabulary plus every learned spelling,
+    /// de-duplicated (case-insensitive), original order preserved.
+    private func biasVocabulary() -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for term in vocabulary.terms + corrections.biasTerms {
+            let key = term.lowercased()
+            guard !term.isEmpty, !seen.contains(key) else { continue }
+            seen.insert(key)
+            out.append(term)
+        }
+        return out
+    }
+
+    /// Store a detected correction and flash a "Learned <term>" confirmation,
+    /// keeping it briefly undoable from the menu.
+    private func learn(_ candidate: CorrectionDetector.Candidate) {
+        FieldEditWatcher.diag("learn: storing “\(candidate.heard)” → “\(candidate.corrected)” + flashing notch")
+        let entry = corrections.learn(heard: candidate.heard, corrected: candidate.corrected)
+        appState.recentlyLearned = entry
+        notch.showLearned(entry.corrected)
+
+        undoClearTask?.cancel()
+        undoClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(12))
+            guard let self, self.appState.recentlyLearned == entry else { return }
+            self.appState.recentlyLearned = nil
+        }
+    }
+
+    /// Undo the most recently learned word (invoked from the menu).
+    func undoLastLearned() {
+        guard let entry = appState.recentlyLearned else { return }
+        corrections.remove(entry)
+        appState.recentlyLearned = nil
+        notch.finish(message: "Removed “\(entry.corrected)”")
     }
 }

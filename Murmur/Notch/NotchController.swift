@@ -50,6 +50,16 @@ final class NotchController {
         scheduleHide(after: 0.9)
     }
 
+    /// Flash a "Learned <term>" confirmation. Re-expands the notch since this
+    /// fires seconds after a dictation finished and the notch has auto-hidden.
+    func showLearned(_ term: String) {
+        hideTask?.cancel()
+        model.partialText = ""
+        model.phase = .learned(term)
+        Task { await notch.expand() }
+        scheduleHide(after: 2.6)
+    }
+
     func showError(_ message: String) {
         hideTask?.cancel()
         model.phase = .error(message)
