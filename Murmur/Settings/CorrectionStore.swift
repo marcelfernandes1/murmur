@@ -54,6 +54,31 @@ final class CorrectionStore {
         persist()
     }
 
+    /// Edit an existing correction in place. `original` identifies the entry to
+    /// replace (by its current `heard` value); the new `heard`/`corrected` are
+    /// trimmed. Empty fields are rejected. Editing keeps the entry's position so
+    /// the list doesn't reshuffle while you type.
+    func update(_ original: LearnedCorrection, heard: String, corrected: String) {
+        let newHeard = heard.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newCorrected = corrected.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newHeard.isEmpty, !newCorrected.isEmpty else { return }
+        guard let index = corrections.firstIndex(where: { $0.id == original.id }) else { return }
+        let updated = LearnedCorrection(
+            heard: newHeard,
+            corrected: newCorrected,
+            createdAt: original.createdAt
+        )
+        // If the new `heard` collides with a *different* entry, drop that one so
+        // we don't end up with two corrections for the same mishearing.
+        corrections.removeAll { $0.id == updated.id && $0.id != original.id }
+        if let index = corrections.firstIndex(where: { $0.id == original.id }) {
+            corrections[index] = updated
+        } else {
+            corrections.insert(updated, at: min(index, corrections.count))
+        }
+        persist()
+    }
+
     /// The corrected spellings, de-duplicated — fed to the recognizer as bias terms.
     var biasTerms: [String] {
         var seen = Set<String>()
