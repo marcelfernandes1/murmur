@@ -46,6 +46,7 @@ final class AppState {
 
     var versionString: String {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
-        return "v\(short)"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
+        return "v\(short) (\(build))"
     }
 }

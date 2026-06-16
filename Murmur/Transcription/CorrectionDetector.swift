@@ -123,8 +123,11 @@ enum CorrectionDetector {
     }
 
     /// Acronyms (NDA), CamelCase (OpenAI), or alphanumeric jargon (GPT-4) — these
-    /// read as intentional terms on their own, no phonetic check needed.
-    private static func isStrongTerm(_ word: String) -> Bool {
+    /// read as intentional terms on their own, no phonetic check needed. Also the
+    /// shape the recognizer emits when guessing a name it doesn't know ("WAMP"),
+    /// so `CorrectionStore` uses it to gate phonetic generalization purely — no
+    /// dictionary/spell-checker required.
+    static func isStrongTerm(_ word: String) -> Bool {
         let letters = word.filter { $0.isLetter }
         if word.count >= 2, word == word.uppercased(), word != word.lowercased(), letters.count >= 2 { return true }
         if word.contains(where: \.isNumber) && word.contains(where: \.isLetter) { return true }
@@ -181,8 +184,9 @@ enum CorrectionDetector {
     }
 
     /// Classic Soundex: a 4-char phonetic code so similar-sounding words bucket
-    /// together (jon/john → J500, claude/cloud → C430).
-    private static func soundex(_ word: String) -> String {
+    /// together (jon/john → J500, claude/cloud → C430). Exposed so callers can
+    /// precompute a term's key once instead of recomputing it per token.
+    static func soundex(_ word: String) -> String {
         let letters = word.uppercased().unicodeScalars.filter { CharacterSet.uppercaseLetters.contains($0) }
         guard let first = letters.first else { return "" }
 
