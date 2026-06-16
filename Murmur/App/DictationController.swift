@@ -26,6 +26,9 @@ final class DictationController {
     /// stream` without console spam. View with: Instruments → os_signpost, or
     /// `log stream --predicate 'subsystem == "com.murmur.app"'`.
     private static let signposter = OSSignposter(subsystem: "com.murmur.app", category: "delivery")
+    /// Capture diagnostics (sample count / duration before transcription). Shares the
+    /// "audio" category with `AudioRecorder` so one log stream shows the whole path.
+    private static let audioLog = Logger(subsystem: "com.murmur.app", category: "audio")
 
     private var isRecording = false
     private var awaitingResult = false
@@ -72,6 +75,9 @@ final class DictationController {
             DispatchQueue.main.async { self?.notch.updateLevel(level) }
         }
         recorder.preferredDeviceUID = preferences.inputDeviceUID
+        // Let the recorder's config-change diagnostics report whether the trigger is
+        // believed held (thread-safe snapshot; no MainActor hop from the audio queue).
+        recorder.hotkeyHeldProvider = { [heldState = hotkeys.heldState] in heldState.get() }
 
         editWatcher.onCorrection = { [weak self] candidate in
             self?.learn(candidate)
@@ -198,7 +204,7 @@ final class DictationController {
             do {
                 try await recorder.start()
                 guard isRecording else {
-                    _ = recorder.stop()
+                    _ = recorder.stop(reason: .hotkeyCancelled)
                     notch.dismiss()
                     return
                 }
@@ -244,12 +250,24 @@ final class DictationController {
         streamTask?.cancel()
         streamTask = nil
 
-        let samples = recorder.stop()
+        let samples = recorder.stop(reason: .hotkeyReleased)
+        let duration = Double(samples.count) / 16_000.0
+        let peak = recorder.peakAmplitude
+        Self.audioLog.log("endRecording: samples=\(samples.count, privacy: .public) duration=\(duration, privacy: .public)s peak=\(peak, privacy: .public)")
+
+        // Don't advance to Transcribing/Polishing on an empty or too-short buffer —
+        // that's the "records, then nothing comes out" symptom (the engine never
+        // delivered any audio). Report it instead of transcribing silence.
+        if samples.count < 1_600 { // < 0.1 s at 16 kHz
+            appState.status = .error("No audio captured")
+            notch.showError("No audio captured — check mic & input device")
+            return
+        }
 
         // A working mic always has some noise floor; essentially-zero peak means
         // the input delivered digital silence (no Mic permission, a muted/wrong
         // device, etc.). Transcribing that is pointless — flag it instead.
-        if !samples.isEmpty && recorder.peakAmplitude < 0.0005 {
+        if peak < 0.0005 {
             appState.status = .error("No microphone signal")
             notch.showError("No mic signal — check input & permission")
             return
