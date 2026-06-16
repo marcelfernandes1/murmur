@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Observation
+import OSLog
 
 /// Orchestrates one dictation: trigger down → record → trigger up → transcribe →
 /// deliver. If an editable field is focused the text is pasted in; otherwise it
@@ -20,6 +21,11 @@ final class DictationController {
     private let history: HistoryStore
     private let editWatcher = FieldEditWatcher()
     private var cleaner: any TextCleaner
+
+    /// Instruments delivery stages so latency is visible in Instruments / `log
+    /// stream` without console spam. View with: Instruments → os_signpost, or
+    /// `log stream --predicate 'subsystem == "com.murmur.app"'`.
+    private static let signposter = OSSignposter(subsystem: "com.murmur.app", category: "delivery")
 
     private var isRecording = false
     private var awaitingResult = false
@@ -75,6 +81,7 @@ final class DictationController {
         // `MURMUR_TEST_CORRECTIONS=1 open Murmur.app` prints PASS/FAIL to the log.
         if ProcessInfo.processInfo.environment["MURMUR_TEST_CORRECTIONS"] != nil {
             CorrectionDetector.runSelfTest()
+            CorrectionStore.runSelfTest()
         }
 
         attachStateHandler(to: engine)
@@ -257,12 +264,15 @@ final class DictationController {
         }
 
         Task {
+            let signposter = Self.signposter
             do {
+                let transcribeState = signposter.beginInterval("transcribe")
                 var text = try await engine.transcribe(
                     samples,
                     language: preferences.language.code,
                     vocabulary: biasVocabulary()
                 )
+                signposter.endInterval("transcribe", transcribeState)
                 // The exact ASR output, recorded for the comparison screen so it
                 // shows every dictation (raw vs. final) — even when nothing changed.
                 let rawTranscript = text
@@ -275,7 +285,9 @@ final class DictationController {
                     // contextual fillers like "you know"/"like"). Fewer reasons for it to
                     // "fix" things means less over-editing.
                     if preferences.removeFillers { text = TranscriptCleaner.removeFillers(text) }
+                    let cleanupState = signposter.beginInterval("cleanup")
                     let cleaned = await cleaner.clean(text)
+                    signposter.endInterval("cleanup", cleanupState)
                     // Reject refusals / "answers" so a guardrailed model can never
                     // paste "As an LLM I cannot…" into your text in place of cleanup.
                     text = CleanupGuard.sanitize(cleaned, original: text)
@@ -283,8 +295,11 @@ final class DictationController {
                     text = TranscriptCleaner.removeFillers(text)
                 }
                 // Apply previously-learned corrections last, so they reliably win
-                // over whatever the recognizer/cleanup produced.
+                // over whatever the recognizer/cleanup produced. Pure, bounded,
+                // in-memory — it cannot block delivery (see CorrectionStore).
+                let correctState = signposter.beginInterval("corrections")
                 text = corrections.apply(to: text)
+                signposter.endInterval("corrections", correctState)
                 deliver(text, original: rawTranscript)
                 appState.status = .idle
             } catch {
@@ -300,16 +315,16 @@ final class DictationController {
             notch.dismiss()
             return
         }
+        let signposter = Self.signposter
         appState.lastTranscript = text
-        // Always record the raw transcript so the comparison screen has an entry
-        // for every dictation — identical columns when nothing was changed.
-        history.add(text, original: original)
 
+        // Get the text to the user FIRST — pasting must not wait on history I/O.
         appState.accessibilityEnabled = accessibility.isTrusted
         let canInsert = accessibility.isTrusted
             && !accessibility.isSecureInputActive
             && accessibility.isEditableFieldFocused()
 
+        let deliverState = signposter.beginInterval("paste")
         if canInsert {
             TextInserter.paste(text)
             notch.finish(message: "Inserted")
@@ -323,6 +338,15 @@ final class DictationController {
             TextInserter.copyToClipboard(text)
             notch.finish(message: "Copied")
         }
+        signposter.endInterval("paste", deliverState)
+
+        // Persist history separately, after delivery, so a slow SwiftData write
+        // can never delay the user getting their text. Always record the raw
+        // transcript so the comparison screen has an entry for every dictation —
+        // identical columns when nothing was changed.
+        let historyState = signposter.beginInterval("history")
+        history.add(text, original: original)
+        signposter.endInterval("history", historyState)
     }
 
     // MARK: - Learning from edits

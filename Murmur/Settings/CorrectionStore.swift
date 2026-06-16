@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import AppKit
 
 /// One auto-learned correction: a word the recognizer mis-produced (`heard`) and
 /// the spelling the user changed it to (`corrected`).
@@ -18,13 +17,55 @@ struct LearnedCorrection: Codable, Equatable, Identifiable, Sendable {
 /// future transcripts. Two levers: `apply(to:)` does an exact, reliable
 /// find-and-replace on the final text, and `biasTerms` nudges the recognizer
 /// toward the right spelling in the first place (via the existing vocab prompt).
+///
+/// `apply(to:)` is on the transcription **delivery hot path**, so it must be
+/// fast and self-contained: it runs only precomputed, in-memory string matching
+/// and never calls AppKit, a spell-checker, or any XPC service. (An earlier
+/// version used `NSSpellChecker` per word to gate phonetic generalization; that
+/// blocks the main thread on the `AppleSpell` XPC service, which intermittently
+/// stalls for seconds and froze the whole app — "Polishing…" beachball.)
 @MainActor
 @Observable
 final class CorrectionStore {
-    private(set) var corrections: [LearnedCorrection]
+    /// Bounds so a pathological transcript or a huge learned-word list can never
+    /// make delivery slow. Generalization is skipped past these; exact matches
+    /// (cheap, capped) always run.
+    private enum Limit {
+        static let corrections = 500      // exact rules compiled
+        static let targets = 200          // distinct terms considered for generalization
+        static let transcriptChars = 20_000
+        static let tokens = 2_000
+        static let comparisons = 50_000   // token × target candidate checks
+    }
+
+    private(set) var corrections: [LearnedCorrection] { didSet { rebuildIndex() } }
 
     private let defaults = UserDefaults.standard
     private let key = "learnedCorrections"
+
+    // MARK: - Precomputed index (rebuilt only when `corrections` changes)
+
+    /// A compiled exact rule: a whole-word, case-insensitive regex and the
+    /// replacement template, built once rather than per `apply(to:)` call.
+    private struct ExactRule {
+        let regex: NSRegularExpression
+        let template: String
+    }
+
+    /// A generalization target with its phonetic key precomputed.
+    private struct Target {
+        let term: String
+        let lower: String
+        let soundex: String
+    }
+
+    private struct Index {
+        let exact: [ExactRule]          // longest `heard` first, so they win over overlaps
+        let targets: [Target]
+        let targetLowercased: Set<String>
+    }
+
+    private var index = Index(exact: [], targets: [], targetLowercased: [])
 
     init() {
         if let data = defaults.data(forKey: key),
@@ -33,7 +74,34 @@ final class CorrectionStore {
         } else {
             corrections = []
         }
+        rebuildIndex()   // didSet doesn't fire from an initializer
     }
+
+    private func rebuildIndex() {
+        let exact = corrections
+            .filter { !$0.heard.isEmpty }
+            .sorted { $0.heard.count > $1.heard.count }
+            .prefix(Limit.corrections)
+            .compactMap { c -> ExactRule? in
+                let pattern = "\\b" + NSRegularExpression.escapedPattern(for: c.heard) + "\\b"
+                guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
+                return ExactRule(regex: re, template: NSRegularExpression.escapedTemplate(for: c.corrected))
+            }
+
+        var seen = Set<String>()
+        var targets: [Target] = []
+        for c in corrections {
+            let lower = c.corrected.lowercased()
+            guard !c.corrected.isEmpty, !seen.contains(lower) else { continue }
+            seen.insert(lower)
+            targets.append(Target(term: c.corrected, lower: lower, soundex: CorrectionDetector.soundex(c.corrected)))
+            if targets.count >= Limit.targets { break }
+        }
+
+        index = Index(exact: Array(exact), targets: targets, targetLowercased: seen)
+    }
+
+    // MARK: - Mutation
 
     /// Record (or refresh) a correction, newest first. Returns the stored entry.
     @discardableResult
@@ -92,61 +160,63 @@ final class CorrectionStore {
         return out
     }
 
+    // MARK: - Apply (delivery hot path — pure, bounded, no AppKit/XPC)
+
     /// Replace learned mis-hearings in `text` with their corrected spellings.
     /// Whole-word and case-insensitive; longer terms first so they win over any
     /// shorter overlap. Then a phonetic pass generalizes to *new* mishearings of
-    /// an already-learned term.
+    /// an already-learned term. Entirely in-memory; safe to call synchronously on
+    /// the delivery path.
     func apply(to text: String) -> String {
-        guard !corrections.isEmpty, !text.isEmpty else { return text }
+        guard !text.isEmpty, !index.exact.isEmpty || !index.targets.isEmpty else { return text }
         var result = text
-        for c in corrections.sorted(by: { $0.heard.count > $1.heard.count }) {
-            guard !c.heard.isEmpty else { continue }
-            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: c.heard) + "\\b"
-            guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+        for rule in index.exact {
             let range = NSRange(result.startIndex..., in: result)
-            let template = NSRegularExpression.escapedTemplate(for: c.corrected)
-            result = re.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: template)
+            result = rule.regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: rule.template)
         }
-        return applyPhonetic(to: result)
+        return generalize(result)
     }
 
-    /// Generalize learned terms: replace any transcript token that *isn't a real
-    /// word* but sounds/looks like a learned term with that term — so learning
-    /// "Whop" (from a "WAP" mishearing) also fixes a later "WAMP", "Wop", etc.
-    /// Real words (per the system spell-checker) are never touched, so we don't
-    /// clobber legitimate vocabulary that merely resembles a learned name.
-    private func applyPhonetic(to text: String) -> String {
-        let targets = biasTerms
-        guard !targets.isEmpty, !text.isEmpty else { return text }
+    /// Generalize learned terms: replace a transcript token that the recognizer
+    /// emitted as a *guessed unknown term* (ALL-CAPS acronym, letter+digit, or
+    /// internal-caps — see `CorrectionDetector.isStrongTerm`) when it sounds/looks
+    /// like a learned term. So learning "SupaBase" also fixes a later "SUPRBASE".
+    ///
+    /// Restricting to that shape replaces the old `NSSpellChecker` "is this a real
+    /// word?" gate: ordinary prose words ("cloud", "map", "database") don't have
+    /// the shape, so legitimate vocabulary is never clobbered — and it costs
+    /// nothing and never touches an XPC service.
+    private func generalize(_ text: String) -> String {
+        guard !index.targets.isEmpty, !text.isEmpty, text.count <= Limit.transcriptChars else { return text }
         let pattern = "[\\p{L}][\\p{L}'’\\-]*"
         guard let re = try? NSRegularExpression(pattern: pattern) else { return text }
         let matches = re.matches(in: text, range: NSRange(text.startIndex..., in: text))
         guard !matches.isEmpty else { return text }
 
-        let checker = NSSpellChecker.shared
-        checker.automaticallyIdentifiesLanguages = true
         let result = NSMutableString(string: text)
+        var comparisons = 0
         // Replace back-to-front so earlier match ranges stay valid.
-        for match in matches.reversed() {
+        for match in matches.reversed().prefix(Limit.tokens) {
             guard let range = Range(match.range, in: text) else { continue }
             let token = String(text[range])
             guard token.count >= 2 else { continue }
+            let tokenLower = token.lowercased()
             // Already one of our terms → leave it.
-            if targets.contains(where: { $0.caseInsensitiveCompare(token) == .orderedSame }) { continue }
-            // Only touch *likely mishearings*: non-dictionary tokens, or ALL-CAPS
-            // tokens (Whisper tends to emit caps when guessing an unknown name —
-            // "WAP"/"WAMP"). A lowercase real word ("map", "wrap", "cloud") is left
-            // alone so we never clobber legitimate vocabulary.
-            let isAllCaps = token == token.uppercased() && token != token.lowercased()
-            let isRealWord = checker.checkSpelling(of: token, startingAt: 0).location == NSNotFound
-            guard !isRealWord || isAllCaps else { continue }
-            // …that plausibly mishears a learned term → swap it in.
-            if let target = targets.first(where: {
-                $0.caseInsensitiveCompare(token) != .orderedSame
-                    && CorrectionDetector.isPlausibleMishearing(
-                        heard: token, corrected: $0, allowStrongTermShortcut: false)
-            }) {
-                result.replaceCharacters(in: match.range, with: target)
+            if index.targetLowercased.contains(tokenLower) { continue }
+            // Only generalize over recognizer "unknown term" guesses, never prose.
+            guard CorrectionDetector.isStrongTerm(token) else { continue }
+            let tokenSoundex = CorrectionDetector.soundex(token)
+            for target in index.targets {
+                comparisons += 1
+                if comparisons > Limit.comparisons { return result as String }
+                if target.lower == tokenLower { continue }
+                // Cheap precomputed phonetic check first; fall back to the full
+                // (still pure) plausibility test for spelling-close variants.
+                if target.soundex == tokenSoundex
+                    || CorrectionDetector.isPlausibleMishearing(heard: token, corrected: target.term, allowStrongTermShortcut: false) {
+                    result.replaceCharacters(in: match.range, with: target.term)
+                    break
+                }
             }
         }
         return result as String
@@ -156,5 +226,55 @@ final class CorrectionStore {
         if let data = try? JSONEncoder().encode(corrections) {
             defaults.set(data, forKey: key)
         }
+    }
+
+    // MARK: - Self-test (env-gated, mirrors CorrectionDetector.runSelfTest)
+
+    /// Inject corrections without persisting — testing only.
+    private func setForTesting(_ list: [LearnedCorrection]) { corrections = list }
+
+    /// Correctness + performance checks for `apply(to:)`. Triggered alongside the
+    /// detector self-test via `MURMUR_TEST_CORRECTIONS`. Prints PASS/FAIL and a
+    /// timing line; the performance assertion guards against the hot path ever
+    /// regressing back to something slow/blocking.
+    static func runSelfTest() {
+        func mk(_ heard: String, _ corrected: String) -> LearnedCorrection {
+            LearnedCorrection(heard: heard, corrected: corrected, createdAt: Date(timeIntervalSince1970: 0))
+        }
+        let store = CorrectionStore()
+        store.setForTesting([
+            mk("SuperBass", "SupaBase"),
+            mk("cloud", "Claude"),
+            mk("Versal", "Vercel"),
+        ])
+
+        struct Case { let input: String; let expect: String; let note: String }
+        let cases: [Case] = [
+            .init(input: "we use cloud daily", expect: "we use Claude daily", note: "exact replace"),
+            .init(input: "ship to SUPRBASE tonight", expect: "ship to SupaBase tonight", note: "generalize ALL-CAPS mishearing"),
+            .init(input: "the database is fast", expect: "the database is fast", note: "lowercase prose untouched"),
+            .init(input: "open a PR now", expect: "open a PR now", note: "no PR→SupaBase overmatch"),
+            .init(input: "deploy on Versal please", expect: "deploy on Vercel please", note: "exact, mixed case"),
+        ]
+        var passed = 0
+        for c in cases {
+            let got = store.apply(to: c.input)
+            let ok = got == c.expect
+            if ok { passed += 1 }
+            print("[CorrectionStore] \(ok ? "PASS" : "FAIL") [\(c.note)] “\(c.input)” → “\(got)” expect “\(c.expect)”")
+        }
+        print("[CorrectionStore] \(passed)/\(cases.count) correctness passed")
+
+        // Performance: a long transcript against a large rule set must stay well
+        // under any human-perceptible delay and must not block.
+        var many: [LearnedCorrection] = []
+        for i in 0..<200 { many.append(mk("term\(i)x", "Term\(i)X")) }
+        store.setForTesting(many)
+        let words = Array(repeating: "the quick BROWN fox JUMPED over LAZY dogs", count: 600).joined(separator: " ")
+        let clock = ContinuousClock()
+        let elapsed = clock.measure { _ = store.apply(to: words) }
+        let ms = Double(elapsed.components.attoseconds) / 1_000_000_000_000_000.0 + Double(elapsed.components.seconds) * 1000.0
+        let fast = ms < 250
+        print("[CorrectionStore] \(fast ? "PASS" : "FAIL") perf: apply() on \(words.count) chars × \(many.count) rules took \(String(format: "%.1f", ms)) ms (budget 250 ms)")
     }
 }
