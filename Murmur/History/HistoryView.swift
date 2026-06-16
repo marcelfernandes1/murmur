@@ -111,11 +111,14 @@ struct HistoryView: View {
                 Spacer(minLength: 0)
                 Image(systemName: isCopied(item) ? "checkmark.circle.fill" : "doc.on.doc")
                     .foregroundStyle(isCopied(item) ? Palette.success : Color.secondary)
+                    .accessibilityHidden(true)
             }
             .contentShape(Rectangle())
             .padding(.vertical, 2)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Transcript: \(item.text)")
+        .accessibilityHint("Copies the transcript")
         .swipeActions {
             Button(role: .destructive) { delete(item) } label: {
                 Label("Delete", systemImage: "trash")

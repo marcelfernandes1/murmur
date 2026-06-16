@@ -1,27 +1,15 @@
 import AppKit
 
-// Renders the Murmur app icon (gradient squircle + white waveform) at every
-// size macOS needs, writing PNGs + Contents.json into the AppIcon.appiconset.
+// Renders the Murmur app icon: an indigo→violet gradient squircle with a subtle
+// top sheen and a centered white waveform (capsule bars matching the app's live
+// waveform). Writes PNGs + Contents.json into the AppIcon.appiconset.
 
 let outDir = "Murmur/Support/Assets.xcassets/AppIcon.appiconset"
 
-func tintedWaveform(point: CGFloat) -> NSImage? {
-    let config = NSImage.SymbolConfiguration(pointSize: point, weight: .semibold)
-    guard let base = NSImage(systemSymbolName: "waveform", accessibilityDescription: nil)?
-        .withSymbolConfiguration(config) else { return nil }
-    let out = NSImage(size: base.size)
-    out.lockFocus()
-    NSColor.white.set()
-    let rect = NSRect(origin: .zero, size: base.size)
-    base.draw(in: rect)
-    rect.fill(using: .sourceAtop)
-    out.unlockFocus()
-    return out
-}
+/// Symmetric equalizer heights (fraction of the body height), centered.
+let barHeights: [CGFloat] = [0.30, 0.52, 0.74, 0.92, 0.74, 0.52, 0.30]
 
 func iconPNG(pixels: Int) -> Data {
-    let glyph = tintedWaveform(point: CGFloat(pixels) * 0.42)
-
     let rep = NSBitmapImageRep(
         bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels,
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -31,25 +19,45 @@ func iconPNG(pixels: Int) -> Data {
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
 
-    let canvas = NSRect(x: 0, y: 0, width: pixels, height: pixels)
+    let P = CGFloat(pixels)
+    let canvas = NSRect(x: 0, y: 0, width: P, height: P)
     NSColor.clear.set()
     canvas.fill()
 
-    let margin = CGFloat(pixels) * 0.085
+    // Rounded-rect "squircle" body.
+    let margin = P * 0.085
     let body = canvas.insetBy(dx: margin, dy: margin)
     let radius = body.width * 0.2237
-    let path = NSBezierPath(roundedRect: body, xRadius: radius, yRadius: radius)
-    let gradient = NSGradient(
-        starting: NSColor(srgbRed: 0.36, green: 0.30, blue: 0.93, alpha: 1),
-        ending: NSColor(srgbRed: 0.64, green: 0.27, blue: 0.91, alpha: 1))!
-    gradient.draw(in: path, angle: -90)
+    let squircle = NSBezierPath(roundedRect: body, xRadius: radius, yRadius: radius)
 
-    if let glyph {
-        let drawRect = NSRect(
-            x: (CGFloat(pixels) - glyph.size.width) / 2,
-            y: (CGFloat(pixels) - glyph.size.height) / 2,
-            width: glyph.size.width, height: glyph.size.height)
-        glyph.draw(in: drawRect)
+    // Brand gradient (indigo top → violet bottom).
+    let gradient = NSGradient(
+        starting: NSColor(srgbRed: 0.40, green: 0.34, blue: 0.96, alpha: 1),
+        ending: NSColor(srgbRed: 0.63, green: 0.26, blue: 0.92, alpha: 1))!
+    gradient.draw(in: squircle, angle: -90)
+
+    // Subtle top sheen for depth, clipped to the body.
+    NSGraphicsContext.saveGraphicsState()
+    squircle.setClip()
+    let sheenRect = NSRect(x: body.minX, y: body.midY, width: body.width, height: body.height / 2)
+    let sheen = NSGradient(
+        starting: NSColor(white: 1, alpha: 0.0),
+        ending: NSColor(white: 1, alpha: 0.16))!
+    sheen.draw(in: sheenRect, angle: 90) // brighter toward the top
+    NSGraphicsContext.restoreGraphicsState()
+
+    // Centered white waveform bars.
+    let count = barHeights.count
+    let barW = body.width * 0.066
+    let gap = body.width * 0.050
+    let totalW = CGFloat(count) * barW + CGFloat(count - 1) * gap
+    var x = body.midX - totalW / 2
+    NSColor.white.setFill()
+    for h in barHeights {
+        let barH = max(barW, body.height * 0.62 * h)
+        let rect = NSRect(x: x, y: body.midY - barH / 2, width: barW, height: barH)
+        NSBezierPath(roundedRect: rect, xRadius: barW / 2, yRadius: barW / 2).fill()
+        x += barW + gap
     }
 
     NSGraphicsContext.restoreGraphicsState()
