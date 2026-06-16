@@ -85,15 +85,21 @@ actor WhisperService: SpeechEngine {
         let notify = stateHandler
         let task = Task { () throws -> WhisperKit in
             notify?(.preparing)
-            // Load the encoder/decoder on the GPU rather than the Neural Engine.
-            // WhisperKit defaults both to `.cpuAndNeuralEngine`, which forces a
-            // cold ANE "specialization" on first use that can stall for minutes
-            // (it surfaced as the app hanging forever on "Transcribing…"). The
-            // GPU path loads instantly and runs fast on Apple Silicon.
+            // Run the encoder + autoregressive decoder on the Neural Engine.
+            // Measured on M4 Max / large-v3-turbo: ANE decode is ~3x faster than
+            // the GPU (RTF 0.21 vs 0.68) — the decoder runs one forward pass per
+            // token and the ANE's low per-call latency crushes the GPU's dispatch
+            // overhead on that serial workload. Mel stays on the GPU (a parallel
+            // matmul it's well suited for); prefill stays on CPU (tiny).
+            //
+            // The cold ANE "specialization" the GPU path was avoiding is a
+            // one-time, OS-cached cost — and `load: true` below forces it to
+            // happen here, during the visible "Preparing model…" phase, never on
+            // the transcribe path (the old "hung on Transcribing…" symptom).
             let compute = ModelComputeOptions(
                 melCompute: .cpuAndGPU,
-                audioEncoderCompute: .cpuAndGPU,
-                textDecoderCompute: .cpuAndGPU,
+                audioEncoderCompute: .cpuAndNeuralEngine,
+                textDecoderCompute: .cpuAndNeuralEngine,
                 prefillCompute: .cpuOnly
             )
             // `load: true` forces the model to fully load here, during the
