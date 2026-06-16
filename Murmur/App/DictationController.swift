@@ -72,6 +72,8 @@ final class DictationController {
         hotkeys.start(fnEnabled: preferences.fnTriggerEnabled)
         appState.shortcutHint = "Trigger: \(hotkeys.triggersDescription)"
 
+        notch.model.accent = preferences.accentTheme
+
         recorder.onLevel = { [weak self] level in
             DispatchQueue.main.async { self?.notch.updateLevel(level) }
         }
@@ -118,6 +120,11 @@ final class DictationController {
     /// Apply the chosen microphone (takes effect on the next recording).
     func applyInputDevice() {
         recorder.preferredDeviceUID = preferences.inputDeviceUID
+    }
+
+    /// Push the chosen brand accent to the notch waveform (live).
+    func applyAccent() {
+        notch.model.accent = preferences.accentTheme
     }
 
     /// Rebuild + (re)load the cleanup backend for the current preference.

@@ -20,6 +20,14 @@ final class NotchViewModel {
     var phase: Phase = .listening
     var levels: [CGFloat] = Array(repeating: floor, count: barCount)
 
+    /// User-selected brand accent.
+    var accent: AccentTheme = .blue
+
+    /// Whether the indicator is showing in the opaque black notch (white content)
+    /// vs the translucent floating glass pill (adaptive content). Set by
+    /// `NotchController` before each show. Defaults true (safe for notched Macs).
+    var isNotchScreen: Bool = true
+
     /// Live partial transcript shown during streaming.
     var partialText: String = ""
 

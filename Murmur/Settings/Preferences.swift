@@ -136,6 +136,11 @@ final class Preferences {
         didSet { defaults.set(hasCompletedOnboarding, forKey: Keys.onboarded) }
     }
 
+    /// Brand accent driving the live waveform. Defaults to vivid blue.
+    var accentTheme: AccentTheme {
+        didSet { defaults.set(accentTheme.rawValue, forKey: Keys.accentTheme) }
+    }
+
     init() {
         let defaults = UserDefaults.standard
         self.defaults = defaults
@@ -161,6 +166,7 @@ final class Preferences {
             : defaults.bool(forKey: Keys.autoLearn)
         launchAtLogin = (SMAppService.mainApp.status == .enabled)
         hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)
+        accentTheme = AccentTheme(rawValue: defaults.string(forKey: Keys.accentTheme) ?? "") ?? .blue
 
         // Apple's on-device cleanup was removed (too slow). Rewrite any stale or
         // unknown stored value (e.g. the old "appleFoundation") to the fast Qwen
@@ -183,6 +189,7 @@ final class Preferences {
         static let cleanupModel = "cleanupModel"
         static let autoLearn = "autoLearnFromEdits"
         static let onboarded = "hasCompletedOnboarding"
+        static let accentTheme = "accentTheme"
         static let migratedTurboV2 = "migratedToTurboV2"
     }
 }

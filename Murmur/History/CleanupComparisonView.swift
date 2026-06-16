@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AppKit
 
 /// Side-by-side audit of every dictation: your raw words (ASR output) vs. the
 /// final delivered text, with a word-level diff so any cleanup/correction — or
@@ -32,7 +33,6 @@ struct CleanupComparisonView: View {
                 }
             }
         }
-        .frame(minWidth: 460, minHeight: 480)
     }
 
     private var legend: some View {
@@ -41,7 +41,7 @@ struct CleanupComparisonView: View {
                 Text("abc").foregroundStyle(.red).strikethrough()
             }
             Label { Text("added by cleanup") } icon: {
-                Text("abc").foregroundStyle(.green).bold()
+                Text("abc").foregroundStyle(.green)
             }
         }
         .font(.caption)
@@ -52,13 +52,30 @@ struct CleanupComparisonView: View {
     private func row(_ entry: Transcript) -> some View {
         let diff = WordDiff.tokens(from: entry.original ?? "", to: entry.text)
         VStack(alignment: .leading, spacing: 8) {
-            Text(entry.createdAt, format: .relative(presentation: .named))
-                .font(.caption)
+            HStack {
+                Text(entry.createdAt, format: .relative(presentation: .named))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Menu {
+                    Button("Copy raw") { copyString(entry.original ?? entry.text) }
+                    Button("Copy cleaned") { copyString(entry.text) }
+                } label: {
+                    Image(systemName: "doc.on.doc").font(.caption)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
                 .foregroundStyle(.secondary)
+            }
 
             block(title: "You said", text: styled(diff.left))
             block(title: "Cleaned", text: styled(diff.right))
         }
+    }
+
+    private func copyString(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func block(title: String, text: AttributedString) -> some View {
@@ -83,11 +100,10 @@ struct CleanupComparisonView: View {
             case .same:
                 break
             case .removed:
-                piece.foregroundColor = .red
+                piece.foregroundColor = Color.red.opacity(0.7)
                 piece.strikethroughStyle = .single
             case .added:
                 piece.foregroundColor = .green
-                piece.inlinePresentationIntent = .stronglyEmphasized
             }
             result += piece
         }
