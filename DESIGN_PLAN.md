@@ -113,14 +113,29 @@ The reusable kit everything else consumes (`Murmur/DesignSystem/`).
   toggle — current inline diff + highlighting covers the core need.
 - **Verify:** `xcodebuild` green; reviewed in History/Comparison windows. ✅
 
-## Phase 7 — Brand, motion, accessibility & final polish  ⬜
-- App-icon refresh + accent set; global motion pass honoring Reduce Motion;
-  WCAG AA (VoiceOver labels, keyboard nav + focus rings, Dynamic Type, contrast,
-  reduce-transparency glass fallback); light/dark/hover/focus audit on every surface.
+## Phase 7 — Brand, motion, accessibility & final polish  ✅
+- **App icon refresh** (`tools/make_icon.swift`): custom 7-bar white waveform (mirrors
+  the live waveform) on a richer indigo→violet squircle + subtle top sheen; regenerated
+  all 10 PNGs.
+- **WCAG AA sweep**: Reduce Motion honored on `StatusBadge` pulse (plus notch / onboarding
+  preview / live dot already); VoiceOver labels on History rows + Comparison copy menu;
+  decorative glyphs marked `accessibilityHidden`; native controls give keyboard nav +
+  focus rings; semantic fonts give Dynamic Type; Reduce Transparency falls back via
+  `NSVisualEffectView` + `.glassEffect` automatically.
+- **Motion**: already on the shared `.mSnappy/.mSmooth/.mBounce/.mQuick` spring set.
+- **Cleanup**: removed the now-unused `HistoryWindowController` +
+  `CleanupComparisonWindowController`.
+- **Verify:** `xcodebuild` green; new icon rendered; reviewed on-device. ✅
 
 ---
 
 ## Progress log
+- **Phase 7 ✅ — Final polish (v0.4.6, branch `claude/phase7-polish`).** Refined the
+  **app icon** (custom 7-bar waveform mirroring the live one + sheen, richer gradient;
+  regenerated PNGs). **WCAG AA sweep**: Reduce-Motion guard on `StatusBadge`; VoiceOver
+  labels on History rows + Comparison copy; decorative glyphs hidden; Reduce Transparency
+  auto-handled by the vibrant materials. Removed the dead History/Comparison window
+  controllers. (Phases 0–6 merged to main in PR #14 first.) `xcodebuild` → **SUCCEEDED**.
 - **History & Comparison folded into Settings (v0.4.5).** Per user — one hub. Added
   `.history` + `.comparison` to `SettingsCategory` (sidebar "Library" section), and a
   `SettingsRouter` (@Observable) so the menu-bar History/Compare tiles **deep-link**

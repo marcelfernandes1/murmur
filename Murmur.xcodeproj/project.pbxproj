@@ -26,7 +26,6 @@
 		4D4399E940F03037A57072C6 /* MButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41272DDBCDAC147413CB543D /* MButtons.swift */; };
 		5008518A229F024E8F45A8FF /* GlassWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE24BEC34A434DFFA2992B73 /* GlassWindow.swift */; };
 		50C8AAFBEEB582ED8650490A /* SingleKeyRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7701A0233E768F91300BB26F /* SingleKeyRecorder.swift */; };
-		51E3F8D0AFBFE5E137127345 /* CleanupComparisonWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45FC2D48289F5F21B1D397DD /* CleanupComparisonWindowController.swift */; };
 		633AF5443B393306246B6798 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EE3570B5B635B2B770C752E /* WaveformView.swift */; };
 		63A6582FA026AF09E2A7F720 /* CleanupComparisonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31C67F329B092E2081510812 /* CleanupComparisonView.swift */; };
 		68CD4D751C1034533737645F /* DynamicNotchKit in Frameworks */ = {isa = PBXBuildFile; productRef = F6E5EB14D72FDFE937417AD0 /* DynamicNotchKit */; };
@@ -43,7 +42,6 @@
 		91628A18DDBD4C1519F42420 /* SpeechEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E76380782B3803DF7E4AB52C /* SpeechEngine.swift */; };
 		92E4016D915EA080EA0823A4 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2BDAA3B98771B1C1E1439F5 /* WhisperKit */; };
 		9553343DB2C032FFA88D3326 /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C28F23AE8BAEA25C1EE64686 /* StatusBadge.swift */; };
-		A13F633661EB5B8D1E965618 /* HistoryWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E49FE95C85F934D59B511B6E /* HistoryWindowController.swift */; };
 		A187ED300B4B3DDA20BC8B01 /* WhisperService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0183A1D9406ED6C24CA638ED /* WhisperService.swift */; };
 		A55E56EDBAB318C744803114 /* AudioDevices.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8130742D65913C223D42C07 /* AudioDevices.swift */; };
 		A66A1A4ADD2A8B6C9C8DEDCB /* CleanupGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26BE6EB28C43A4AA45C0F9F5 /* CleanupGuard.swift */; };
@@ -80,7 +78,6 @@
 		3EE3570B5B635B2B770C752E /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
 		41272DDBCDAC147413CB543D /* MButtons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MButtons.swift; sourceTree = "<group>"; };
 		418E013920EE917911B19B24 /* AccessibilityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityManager.swift; sourceTree = "<group>"; };
-		45FC2D48289F5F21B1D397DD /* CleanupComparisonWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupComparisonWindowController.swift; sourceTree = "<group>"; };
 		4A9345B4C0ED02E36D8FAE5B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		4E022A12FF0218BCBCE92474 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		53775387F79D53139E81F44D /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
@@ -110,7 +107,6 @@
 		D898C82CF4AF8BFEA6BACEFD /* TranscriptCleaner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptCleaner.swift; sourceTree = "<group>"; };
 		DD6540DE72D506FC6CD26EC9 /* CorrectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectionStore.swift; sourceTree = "<group>"; };
 		E4268F3901A1AD7F1593102F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		E49FE95C85F934D59B511B6E /* HistoryWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryWindowController.swift; sourceTree = "<group>"; };
 		E5B9D695B2A8BFAAFC51684A /* GlassCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassCard.swift; sourceTree = "<group>"; };
 		E6E99D47116B93F220C349AA /* Transcript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transcript.swift; sourceTree = "<group>"; };
 		E76380782B3803DF7E4AB52C /* SpeechEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechEngine.swift; sourceTree = "<group>"; };
@@ -230,10 +226,8 @@
 			isa = PBXGroup;
 			children = (
 				31C67F329B092E2081510812 /* CleanupComparisonView.swift */,
-				45FC2D48289F5F21B1D397DD /* CleanupComparisonWindowController.swift */,
 				F2AC3688EC42A83EA4F8CAC8 /* HistoryStore.swift */,
 				A710610BF3B66223924FEA20 /* HistoryView.swift */,
-				E49FE95C85F934D59B511B6E /* HistoryWindowController.swift */,
 				E6E99D47116B93F220C349AA /* Transcript.swift */,
 			);
 			path = History;
@@ -393,7 +387,6 @@
 				A55E56EDBAB318C744803114 /* AudioDevices.swift in Sources */,
 				D68C25E1537B89541274C1C7 /* AudioRecorder.swift in Sources */,
 				63A6582FA026AF09E2A7F720 /* CleanupComparisonView.swift in Sources */,
-				51E3F8D0AFBFE5E137127345 /* CleanupComparisonWindowController.swift in Sources */,
 				A66A1A4ADD2A8B6C9C8DEDCB /* CleanupGuard.swift in Sources */,
 				B0445A07A5B43E52140C26A0 /* CleanupPrompt.swift in Sources */,
 				78894A1417766FB71E56A83D /* CorrectionDetector.swift in Sources */,
@@ -407,7 +400,6 @@
 				5008518A229F024E8F45A8FF /* GlassWindow.swift in Sources */,
 				35471ED6D4C5CA39C62FAB66 /* HistoryStore.swift in Sources */,
 				1BF2F774E3AA092F849AEBE7 /* HistoryView.swift in Sources */,
-				A13F633661EB5B8D1E965618 /* HistoryWindowController.swift in Sources */,
 				6B69B773207E03058DADE024 /* HotkeyManager.swift in Sources */,
 				F21DAB5E9F7D4B40F39FEB44 /* LLMCleaner.swift in Sources */,
 				4D4399E940F03037A57072C6 /* MButtons.swift in Sources */,
@@ -511,7 +503,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -526,7 +518,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.4.5;
+				MARKETING_VERSION = 0.4.6;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.murmur.app;
@@ -576,7 +568,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -597,7 +589,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.4.5;
+				MARKETING_VERSION = 0.4.6;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

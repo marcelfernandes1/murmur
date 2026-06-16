@@ -122,6 +122,7 @@ struct OnboardingView: View {
                 .foregroundStyle(accent)
                 .frame(width: 84, height: 84)
                 .glassEffect(.regular, in: .circle)
+                .accessibilityHidden(true)
 
             VStack(spacing: Spacing.sm) {
                 Text(title).font(.mTitle)

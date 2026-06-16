@@ -58,6 +58,7 @@ struct MenuBarPopover: View {
             Image(systemName: "waveform")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(prefs.accentTheme.adaptive)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Murmur").font(.mHeadline)
                 Text(appState.versionString)
@@ -86,6 +87,7 @@ struct MenuBarPopover: View {
             Image(systemName: "command")
                 .font(.system(size: 11))
                 .foregroundStyle(Palette.textSecondary)
+                .accessibilityHidden(true)
             if !appState.shortcutHint.isEmpty {
                 Text(appState.shortcutHint)
                     .font(.mCaption2)

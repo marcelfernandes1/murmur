@@ -41,16 +41,19 @@ struct StatusBadge: View {
     /// When true, the dot softly pulses (use for `.listening` / `.working`).
     var animated: Bool = false
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
+
+    private var shouldPulse: Bool { animated && !reduceMotion }
 
     var body: some View {
         HStack(spacing: Spacing.sm) {
             Circle()
                 .fill(kind.color)
                 .frame(width: 8, height: 8)
-                .scaleEffect(animated && pulse ? 1.35 : 1.0)
-                .opacity(animated && pulse ? 0.55 : 1.0)
-                .animation(animated ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : nil,
+                .scaleEffect(shouldPulse && pulse ? 1.35 : 1.0)
+                .opacity(shouldPulse && pulse ? 0.55 : 1.0)
+                .animation(shouldPulse ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : nil,
                            value: pulse)
             Text(label)
                 .font(.mCallout)
@@ -58,7 +61,7 @@ struct StatusBadge: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(label) status")
-        .onAppear { if animated { pulse = true } }
+        .onAppear { if shouldPulse { pulse = true } }
     }
 }
 

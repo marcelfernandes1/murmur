@@ -66,6 +66,7 @@ struct CleanupComparisonView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .foregroundStyle(.secondary)
+                .accessibilityLabel("Copy options")
             }
 
             block(title: "You said", text: styled(diff.left))
