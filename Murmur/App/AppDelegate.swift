@@ -17,32 +17,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         vocabulary: vocabulary,
         corrections: corrections
     )
-    private lazy var historyWindow = HistoryWindowController(container: historyStore.container)
-    private lazy var comparisonWindow = CleanupComparisonWindowController(container: historyStore.container)
+    let settingsRouter = SettingsRouter()
     private lazy var settingsWindow = SettingsWindowController(
         prefs: preferences,
         appState: appState,
         dictation: dictation,
         vocabulary: vocabulary,
-        corrections: corrections
+        corrections: corrections,
+        router: settingsRouter,
+        container: historyStore.container
+    )
+    private lazy var onboardingWindow = OnboardingWindowController(
+        prefs: preferences,
+        appState: appState,
+        dictation: dictation
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         dictation.bootstrap()
 
-        // First launch: open Settings so the user can grant permissions.
+        // First launch: run the welcome flow (permissions + a live practice).
         if !preferences.hasCompletedOnboarding {
-            showSettings()
+            onboardingWindow.show()
             preferences.hasCompletedOnboarding = true
         }
     }
 
     func showHistory() {
-        historyWindow.show()
+        settingsRouter.category = .history
+        settingsWindow.show()
     }
 
     func showComparison() {
-        comparisonWindow.show()
+        settingsRouter.category = .comparison
+        settingsWindow.show()
     }
 
     func showSettings() {
