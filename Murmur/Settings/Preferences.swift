@@ -8,12 +8,9 @@ import ServiceManagement
 final class Preferences {
     enum ModelChoice: String, CaseIterable, Identifiable {
         case parakeet
-        case tiny
         case base
         case small
         case turbo = "large-v3_turbo_954MB"
-        case distilTurbo = "distil-large-v3_turbo_600MB"
-        case turboFull = "large-v3_turbo"
 
         enum Engine { case whisper, parakeet }
 
@@ -21,17 +18,13 @@ final class Preferences {
         var engine: Engine { self == .parakeet ? .parakeet : .whisper }
         /// WhisperKit model name (unused for Parakeet).
         var whisperKitName: String { rawValue }
-        var isEnglishOnly: Bool { self == .distilTurbo }
 
         var displayName: String {
             switch self {
             case .parakeet: return "Parakeet TDT 0.6B v3 — fastest, multilingual (~600 MB)"
-            case .tiny: return "Whisper Tiny — fastest Whisper, basic accuracy (~75 MB)"
             case .base: return "Whisper Base — fast (~145 MB)"
             case .small: return "Whisper Small — balanced, multilingual (~480 MB)"
             case .turbo: return "Whisper Large v3 Turbo — accurate, multilingual (~950 MB)"
-            case .distilTurbo: return "Whisper Distil Turbo — fast, English only (~600 MB)"
-            case .turboFull: return "Whisper Large v3 Turbo (full) — max accuracy, slow load (~3 GB)"
             }
         }
     }
@@ -147,17 +140,19 @@ final class Preferences {
         let defaults = UserDefaults.standard
         self.defaults = defaults
 
-        model = ModelChoice(rawValue: defaults.string(forKey: Keys.model) ?? "") ?? .turbo
+        // First-ever launch defaults to Whisper Small; a stored choice (incl. a
+        // now-removed model) is honored, falling back to Small if unreadable.
+        model = ModelChoice(rawValue: defaults.string(forKey: Keys.model) ?? "") ?? .small
 
         language = Language(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? .auto
         inputDeviceUID = defaults.string(forKey: Keys.inputDeviceUID)
         fnTriggerEnabled = defaults.object(forKey: Keys.fnTrigger) == nil
             ? true
             : defaults.bool(forKey: Keys.fnTrigger)
+        // First-launch defaults: streaming, filler removal, and smart cleanup all
+        // OFF (`bool(forKey:)` is false when unset). Each persists once toggled.
         streaming = defaults.bool(forKey: Keys.streaming)
-        removeFillers = defaults.object(forKey: Keys.removeFillers) == nil
-            ? true
-            : defaults.bool(forKey: Keys.removeFillers)
+        removeFillers = defaults.bool(forKey: Keys.removeFillers)
         smartCleanup = defaults.bool(forKey: Keys.smartCleanup)
         let storedCleanup = defaults.string(forKey: Keys.cleanupModel) ?? ""
         cleanupModel = CleanupModel(rawValue: storedCleanup) ?? .qwen1_5B

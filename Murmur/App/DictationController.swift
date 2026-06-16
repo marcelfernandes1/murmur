@@ -32,6 +32,7 @@ final class DictationController {
 
     private var isRecording = false
     private var awaitingResult = false
+    private var didWarmOthers = false
     private var streamTask: Task<Void, Never>?
     private var undoClearTask: Task<Void, Never>?
 
@@ -175,15 +176,36 @@ final class DictationController {
         switch state {
         case .preparing:
             appState.modelPhase = .preparing
-            if awaitingResult { notch.showPreparing("Preparing model…") }
+            if awaitingResult { notch.showPreparing("Preparing model… (first run can take a couple minutes)") }
         case .ready:
             appState.modelPhase = .ready
             if awaitingResult { notch.showTranscribing() }
+            warmOtherModels()
         case .failed(let message):
             appState.modelPhase = .failed(message)
             if awaitingResult {
                 awaitingResult = false
                 notch.showError("Model failed to load")
+            }
+        }
+    }
+
+    /// Once the selected model is ready, quietly load every *other* model a single
+    /// time so Core ML downloads + ANE-specializes each and caches the result on
+    /// disk. Switching models later then hits a warm cache (instant) instead of
+    /// triggering a fresh multi-minute Neural Engine compile. Runs at background
+    /// priority, sequentially (only one extra model resident at a time), and drops
+    /// each instance once its cache is warmed — the on-disk cache is what persists.
+    private func warmOtherModels() {
+        guard !didWarmOthers else { return }
+        didWarmOthers = true
+        let selected = preferences.model
+        Task.detached(priority: .background) {
+            // Let the just-loaded model settle before competing for the ANE.
+            try? await Task.sleep(for: .seconds(5))
+            for choice in Preferences.ModelChoice.allCases where choice != selected {
+                let engine = await MainActor.run { Self.makeEngine(for: choice) }
+                await engine.preload()
             }
         }
     }
@@ -278,7 +300,7 @@ final class DictationController {
         if appState.modelPhase == .ready {
             notch.showTranscribing()
         } else {
-            notch.showPreparing("Preparing model…")
+            notch.showPreparing("Preparing model… (first run can take a couple minutes)")
         }
 
         Task {
