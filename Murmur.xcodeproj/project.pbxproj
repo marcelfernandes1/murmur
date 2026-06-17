@@ -34,6 +34,7 @@
 		6B69B773207E03058DADE024 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69102DFB3C77FB36C38F5338 /* HotkeyManager.swift */; };
 		707F1B99F7DF596327445A49 /* MenuBarPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 541639C5CB0BE419E68DE32F /* MenuBarPopover.swift */; };
 		75BAF3AD145B68E4CA776321 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07FD1ACC5BDEAE30E2A102AA /* AppDelegate.swift */; };
+		76BB9AD59ACCD2F0B8090A15 /* AUHALInputUnit.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFE1B50504C3EB493332170B /* AUHALInputUnit.swift */; };
 		7837C7BC8C5F799F1B341CB6 /* NotchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A54520474BD73D1D2080A4C8 /* NotchViewModel.swift */; };
 		78894A1417766FB71E56A83D /* CorrectionDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD6717653C34A491F548779 /* CorrectionDetector.swift */; };
 		7BF335A8CB663BA7EF438918 /* Motion.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5E949E85050BFBCC97EFD5D /* Motion.swift */; };
@@ -109,6 +110,7 @@
 		D8130742D65913C223D42C07 /* AudioDevices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDevices.swift; sourceTree = "<group>"; };
 		D898C82CF4AF8BFEA6BACEFD /* TranscriptCleaner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptCleaner.swift; sourceTree = "<group>"; };
 		DD6540DE72D506FC6CD26EC9 /* CorrectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectionStore.swift; sourceTree = "<group>"; };
+		DFE1B50504C3EB493332170B /* AUHALInputUnit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AUHALInputUnit.swift; sourceTree = "<group>"; };
 		E4268F3901A1AD7F1593102F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E5B9D695B2A8BFAAFC51684A /* GlassCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassCard.swift; sourceTree = "<group>"; };
 		E6E99D47116B93F220C349AA /* Transcript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transcript.swift; sourceTree = "<group>"; };
@@ -272,6 +274,7 @@
 			children = (
 				D8130742D65913C223D42C07 /* AudioDevices.swift */,
 				D1BBEA3578F8BE4B12AB91BA /* AudioRecorder.swift */,
+				DFE1B50504C3EB493332170B /* AUHALInputUnit.swift */,
 			);
 			path = Audio;
 			sourceTree = "<group>";
@@ -387,6 +390,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				76BB9AD59ACCD2F0B8090A15 /* AUHALInputUnit.swift in Sources */,
 				485778A5A6759AFE807D25CC /* AccentTheme.swift in Sources */,
 				049A887223BD26F894C4FA9D /* AccessibilityManager.swift in Sources */,
 				75BAF3AD145B68E4CA776321 /* AppDelegate.swift in Sources */,
@@ -511,7 +515,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 43;
+				CURRENT_PROJECT_VERSION = 48;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -526,7 +530,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.4.9;
+				MARKETING_VERSION = 0.4.14;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.murmur.app;
@@ -576,7 +580,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 43;
+				CURRENT_PROJECT_VERSION = 48;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -597,7 +601,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.4.9;
+				MARKETING_VERSION = 0.4.14;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
