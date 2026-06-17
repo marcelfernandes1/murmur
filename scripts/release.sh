@@ -155,10 +155,17 @@ xcrun stapler staple "$DMG"
 # --- Sparkle appcast -------------------------------------------------------
 # generate_appcast signs the DMG with the EdDSA key in the keychain and emits
 # appcast.xml whose enclosure points at this version's GitHub release asset.
+# It applies ONE url-prefix to every archive it finds and merges into any
+# existing appcast — so feed it only THIS version's DMG, in a clean dir, with no
+# stale appcast.xml. SUFeedURL resolves to releases/latest, so each release
+# advertising just itself is exactly what we want.
 echo "==> Generating Sparkle appcast…"
 GA=$(find "$HOME/Library/Developer/Xcode/DerivedData" -path "*artifacts/sparkle/Sparkle/bin/generate_appcast" 2>/dev/null | head -1)
 [[ -x "$GA" ]] || { echo "error: generate_appcast not found — build once to resolve Sparkle" >&2; exit 1; }
-"$GA" --download-url-prefix "https://github.com/$REPO_SLUG/releases/download/$TAG/" -o "$DIST_DIR/appcast.xml" "$DIST_DIR"
+APPCAST_SRC="$BUILD_DIR/appcast-src"; rm -rf "$APPCAST_SRC"; mkdir -p "$APPCAST_SRC"
+cp "$DMG" "$APPCAST_SRC/"
+rm -f "$DIST_DIR/appcast.xml"
+"$GA" --download-url-prefix "https://github.com/$REPO_SLUG/releases/download/$TAG/" -o "$DIST_DIR/appcast.xml" "$APPCAST_SRC"
 
 echo
 echo "Done:"
