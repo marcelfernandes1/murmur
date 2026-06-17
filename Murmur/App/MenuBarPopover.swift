@@ -13,6 +13,7 @@ struct MenuBarPopover: View {
     @Environment(AppState.self) private var appState
     @Environment(DictationController.self) private var dictation
     @Environment(Preferences.self) private var prefs
+    @EnvironmentObject private var updater: UpdaterController
 
     var body: some View {
         VStack(spacing: Spacing.md) {
@@ -43,6 +44,8 @@ struct MenuBarPopover: View {
             }
 
             quickActions
+
+            updateRow
 
             footer
         }
@@ -78,6 +81,28 @@ struct MenuBarPopover: View {
             QuickTile(icon: "text.magnifyingglass", label: "Compare", action: showComparison)
             QuickTile(icon: "gearshape", label: "Settings", action: showSettings)
         }
+    }
+
+    // MARK: Check for updates
+
+    private var updateRow: some View {
+        Button {
+            updater.checkForUpdates()
+        } label: {
+            HStack(spacing: Spacing.sm) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.textSecondary)
+                    .accessibilityHidden(true)
+                Text("Check for Updates…")
+                    .font(.mCaption)
+                    .foregroundStyle(Palette.textSecondary)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(GhostButtonStyle())
+        .disabled(!updater.canCheckForUpdates)
     }
 
     // MARK: Footer

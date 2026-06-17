@@ -15,6 +15,7 @@ struct MurmurApp: App {
             .environment(delegate.appState)
             .environment(delegate.dictation)
             .environment(delegate.preferences)
+            .environmentObject(delegate.updater)
         } label: {
             MenuBarLabel(appState: delegate.appState)
         }
