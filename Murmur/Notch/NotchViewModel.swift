@@ -34,8 +34,15 @@ final class NotchViewModel {
     private static let gamma: CGFloat = 0.7      // perceptual curve (<1 lifts quiet speech)
     private static let liveliness: CGFloat = 1.4 // pushes normal speech toward a full, lively bar
 
+    // Bar-height smoothing, applied once per fixed visual tick (see `pushLevel`).
+    // Asymmetric so speech reads as responsive (fast attack) without jitter, and
+    // settles gently (slower decay).
+    private static let attackSmoothing: CGFloat = 0.6
+    private static let decaySmoothing: CGFloat = 0.28
+
     private var peakEnv: Float = 0               // tracks recent speech peaks
     private var floorEnv: Float = 0              // tracks the ambient noise floor
+    private var smoothedBar: CGFloat = floor     // last emitted bar height (for smoothing)
 
     var phase: Phase = .listening
     var levels: [CGFloat] = Array(repeating: floor, count: barCount)
@@ -51,11 +58,17 @@ final class NotchViewModel {
     /// Live partial transcript shown during streaming.
     var partialText: String = ""
 
-    /// Append a new RMS level to the rolling waveform buffer.
+    /// Advance the rolling waveform by one bar from the interval RMS.
     ///
-    /// Normalizes the raw RMS against an adaptive noise floor and speech peak so
-    /// the waveform looks the same whether the input is a quiet built-in mic or
-    /// a loud Bluetooth headset. See the auto-gain note above.
+    /// Called once per fixed visual tick (~40 ms) by `NotchController`'s clock —
+    /// NOT once per audio callback. That makes scroll speed and auto-gain
+    /// reactivity independent of device callback cadence and buffer size, so a
+    /// 48 kHz built-in mic, a 24 kHz AirPods mic, and any USB mic all scroll at
+    /// the same rate.
+    ///
+    /// Normalizes the RMS against an adaptive noise floor and speech peak so the
+    /// waveform looks the same whether the input is a quiet built-in mic or a loud
+    /// Bluetooth headset, then lightly smooths the bar height. See the notes above.
     func pushLevel(_ rms: Float) {
         // Peak envelope: fast attack toward louder speech, slow release after.
         if rms > peakEnv {
@@ -76,11 +89,15 @@ final class NotchViewModel {
         let span = max(peakEnv - floorEnv, Self.minSpan)
         let ratio = CGFloat(max(0, rms - floorEnv) / span)
         let shaped = pow(min(ratio, 1.0), Self.gamma) * Self.liveliness
-        let normalized = min(1.0, max(Self.floor, shaped))
+        let target = min(1.0, max(Self.floor, shaped))
+
+        // Light, asymmetric smoothing: rise quickly to new speech, fall gently.
+        let coeff = target > smoothedBar ? Self.attackSmoothing : Self.decaySmoothing
+        smoothedBar += (target - smoothedBar) * coeff
 
         var next = levels
         next.removeFirst()
-        next.append(normalized)
+        next.append(smoothedBar)
         levels = next
     }
 
@@ -89,5 +106,6 @@ final class NotchViewModel {
         // Recalibrate from scratch so a mic switch between sessions adapts fresh.
         peakEnv = 0
         floorEnv = 0
+        smoothedBar = Self.floor
     }
 }

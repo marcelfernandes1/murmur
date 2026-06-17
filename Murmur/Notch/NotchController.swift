@@ -30,8 +30,36 @@ final class NotchController {
 
     private var hideTask: Task<Void, Never>?
 
+    /// Supplies the interval RMS/peak since the last call (drained from the
+    /// recorder's metering accumulator). Set by `DictationController`.
+    var levelProvider: (() -> (rms: Float, peak: Float)?)?
+
+    /// Fixed-cadence visual clock that advances the waveform independently of
+    /// audio callback frequency. ~40 ms ⇒ 25 bars/sec, consistent across mics.
+    private var levelClock: Timer?
+    private static let levelTickInterval: TimeInterval = 0.04
+
+    private func startLevelClock() {
+        levelClock?.invalidate()
+        let timer = Timer(timeInterval: Self.levelTickInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.model.pushLevel(self.levelProvider?()?.rms ?? 0)
+            }
+        }
+        // Common mode so the waveform keeps ticking during menu tracking etc.
+        RunLoop.main.add(timer, forMode: .common)
+        levelClock = timer
+    }
+
+    private func stopLevelClock() {
+        levelClock?.invalidate()
+        levelClock = nil
+    }
+
     func showPreparing(_ message: String) {
         hideTask?.cancel()
+        stopLevelClock()
         updateScreenStyle()
         model.partialText = ""
         model.phase = .preparing(message)
@@ -44,6 +72,7 @@ final class NotchController {
         model.reset()
         model.partialText = ""
         model.phase = .listening
+        startLevelClock()
         Task { await notch.expand() }
     }
 
@@ -54,12 +83,14 @@ final class NotchController {
 
     func showTranscribing() {
         hideTask?.cancel()
+        stopLevelClock()
         model.partialText = ""
         model.phase = .transcribing
     }
 
     func finish(message: String) {
         hideTask?.cancel()
+        stopLevelClock()
         model.phase = .done(message)
         scheduleHide(after: 1.6)
     }
@@ -77,6 +108,7 @@ final class NotchController {
 
     func showError(_ message: String) {
         hideTask?.cancel()
+        stopLevelClock()
         model.phase = .error(message)
         scheduleHide(after: 2.4)
     }
@@ -84,11 +116,8 @@ final class NotchController {
     /// Hide immediately (e.g. an empty/aborted dictation).
     func dismiss() {
         hideTask?.cancel()
+        stopLevelClock()
         hideTask = Task { await notch.hide() }
-    }
-
-    func updateLevel(_ rms: Float) {
-        model.pushLevel(rms)
     }
 
     private func scheduleHide(after seconds: Double) {

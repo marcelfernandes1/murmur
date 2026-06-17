@@ -74,9 +74,10 @@ final class DictationController {
 
         notch.model.accent = preferences.accentTheme
 
-        recorder.onLevel = { [weak self] level in
-            DispatchQueue.main.async { self?.notch.updateLevel(level) }
-        }
+        // The waveform is advanced by the notch's own fixed visual clock, which
+        // pulls the interval RMS from the recorder here — decoupled from audio
+        // callback cadence so scroll speed is identical across mics/buffer sizes.
+        notch.levelProvider = { [weak recorder] in recorder?.drainLevel() }
         recorder.preferredDeviceUID = preferences.inputDeviceUID
         // Let the recorder's config-change diagnostics report whether the trigger is
         // believed held (thread-safe snapshot; no MainActor hop from the audio queue).
