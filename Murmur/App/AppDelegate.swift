@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let vocabulary = VocabularyStore()
     let corrections = CorrectionStore()
     let historyStore = HistoryStore()
+    let updater = UpdaterController()
 
     private(set) lazy var dictation = DictationController(
         appState: appState,

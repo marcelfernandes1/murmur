@@ -26,5 +26,17 @@
 	<string>Copyright © 2026. All rights reserved.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Murmur records your voice so it can transcribe it into text.</string>
+	<!-- Sparkle auto-update. The appcast is published as a GitHub release asset;
+	     `releases/latest/download` always resolves to the newest release's copy,
+	     so the feed self-updates with every release. EdDSA-signed; the matching
+	     private key lives only in the release machine's login keychain. -->
+	<key>SUFeedURL</key>
+	<string>https://github.com/marcelfernandes1/murmur/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>AEOS5Xb8DYicus0VaosAzKyo3kiwpANUU3xZ5eSIgf8=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

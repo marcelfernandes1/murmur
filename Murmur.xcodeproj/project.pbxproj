@@ -13,6 +13,7 @@
 		0AD27F24DC0433CCB14B64AF /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0811CCB6558926ABD7900E5 /* Typography.swift */; };
 		0C5CF1AE38A2E4B725AD796C /* LLM in Frameworks */ = {isa = PBXBuildFile; productRef = 2C3733B11FECE9888D7295DE /* LLM */; };
 		1109CDCA8EAD158DB27D8035 /* ParakeetService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ED8048E32D48DEA392FFA05 /* ParakeetService.swift */; };
+		126B91ACCD980A3F62F987E9 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = DECF0E8FB2D2058742D4EF03 /* Sparkle */; };
 		12D6E3FB86346EF5B1265799 /* NotchController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7451C1A732FF606D034E48 /* NotchController.swift */; };
 		1BF2F774E3AA092F849AEBE7 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A710610BF3B66223924FEA20 /* HistoryView.swift */; };
 		1ECEB6CEC3C683A38B8CFCB0 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6770C1B15A28CC35B18049A0 /* SettingsView.swift */; };
@@ -59,6 +60,7 @@
 		D68C25E1537B89541274C1C7 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1BBEA3578F8BE4B12AB91BA /* AudioRecorder.swift */; };
 		D7743C9609DE2FCF1F6890BF /* DictationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F26B40DC1616BEBE369C62DC /* DictationController.swift */; };
 		D7AA265743FD8FCA08221584 /* CorrectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD6540DE72D506FC6CD26EC9 /* CorrectionStore.swift */; };
+		D9D9261A7205E9C7672B1928 /* UpdaterController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C49333C643A57D1DCCF4A732 /* UpdaterController.swift */; };
 		E759A053D9783F01F527563B /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11F3F9DDFC9FC686E91DDD4 /* Palette.swift */; };
 		F21DAB5E9F7D4B40F39FEB44 /* LLMCleaner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62DC13FB2394C0085B94D8D9 /* LLMCleaner.swift */; };
 /* End PBXBuildFile section */
@@ -99,6 +101,7 @@
 		A710610BF3B66223924FEA20 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 		ACD6717653C34A491F548779 /* CorrectionDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectionDetector.swift; sourceTree = "<group>"; };
 		C28F23AE8BAEA25C1EE64686 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
+		C49333C643A57D1DCCF4A732 /* UpdaterController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterController.swift; sourceTree = "<group>"; };
 		C5702C2D6B3C04568EEF3BA6 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		C834EC374C4A986C47F46292 /* Murmur.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Murmur.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CE24BEC34A434DFFA2992B73 /* GlassWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassWindow.swift; sourceTree = "<group>"; };
@@ -128,6 +131,7 @@
 				68CD4D751C1034533737645F /* DynamicNotchKit in Frameworks */,
 				8895D96CC5D6FA0BF39FCEF9 /* FluidAudio in Frameworks */,
 				0C5CF1AE38A2E4B725AD796C /* LLM in Frameworks */,
+				126B91ACCD980A3F62F987E9 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -241,6 +245,7 @@
 				F26B40DC1616BEBE369C62DC /* DictationController.swift */,
 				541639C5CB0BE419E68DE32F /* MenuBarPopover.swift */,
 				56634B3B5D3BF1AE378F4D4C /* MurmurApp.swift */,
+				C49333C643A57D1DCCF4A732 /* UpdaterController.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -318,6 +323,7 @@
 				F6E5EB14D72FDFE937417AD0 /* DynamicNotchKit */,
 				428C87E32996A89D6D2D668E /* FluidAudio */,
 				2C3733B11FECE9888D7295DE /* LLM */,
+				DECF0E8FB2D2058742D4EF03 /* Sparkle */,
 			);
 			productName = Murmur;
 			productReference = C834EC374C4A986C47F46292 /* Murmur.app */;
@@ -352,6 +358,7 @@
 				6E30B443696724587DF6189C /* XCRemoteSwiftPackageReference "FluidAudio" */,
 				68A09680EA56AD8543AE1FFC /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
 				821E841CC8C29105313AD341 /* XCRemoteSwiftPackageReference "LLM.swift" */,
+				35309D7AB0FF9DC97C88691A /* XCRemoteSwiftPackageReference "Sparkle" */,
 				397003762783C97EEB554A17 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -425,6 +432,7 @@
 				BB26F1F85BF7C18DDD03ACD0 /* Transcript.swift in Sources */,
 				86664E22E015C17BB9D5A47D /* TranscriptCleaner.swift in Sources */,
 				0AD27F24DC0433CCB14B64AF /* Typography.swift in Sources */,
+				D9D9261A7205E9C7672B1928 /* UpdaterController.swift in Sources */,
 				A68563F0E8D48DB4D9E81CFF /* VocabularyStore.swift in Sources */,
 				633AF5443B393306246B6798 /* WaveformView.swift in Sources */,
 				A187ED300B4B3DDA20BC8B01 /* WhisperService.swift in Sources */,
@@ -503,7 +511,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 41;
+				CURRENT_PROJECT_VERSION = 42;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -518,7 +526,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.4.7;
+				MARKETING_VERSION = 0.4.8;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.murmur.app;
@@ -568,7 +576,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 41;
+				CURRENT_PROJECT_VERSION = 42;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -589,7 +597,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.4.7;
+				MARKETING_VERSION = 0.4.8;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -627,6 +635,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		35309D7AB0FF9DC97C88691A /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.6.0;
+			};
+		};
 		397003762783C97EEB554A17 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
@@ -689,6 +705,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 397003762783C97EEB554A17 /* XCRemoteSwiftPackageReference "WhisperKit" */;
 			productName = WhisperKit;
+		};
+		DECF0E8FB2D2058742D4EF03 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 35309D7AB0FF9DC97C88691A /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 		F6E5EB14D72FDFE937417AD0 /* DynamicNotchKit */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -1,8 +1,22 @@
 # Xcode / build
 DerivedData/
 build/
+dist/
 *.xcuserstate
 xcuserdata/
+
+# Signing & notarization secrets — NEVER commit these.
+# Developer ID / App Store Connect keys, certs, and credential files.
+*.p8
+AuthKey_*
+*.pem
+*.p12
+*.cer
+*.mobileprovision
+*.key
+.env
+.env.*
+notary.env
 
 # SwiftPM
 .swiftpm/
