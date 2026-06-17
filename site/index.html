@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Murmur — Talk. It types. Everywhere on your Mac.</title>
+<meta name="description" content="Murmur is a 100% on-device dictation app for macOS. Hold one key, speak, and your words are typed into any app — instantly, privately, offline. No cloud. No subscription." />
+<meta name="theme-color" content="#060509" />
+<script>document.documentElement.className+=' js';</script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800;900&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   MURMUR — landing page
+   Aesthetic: cinematic near-black, indigo→violet brand glow,
+   Liquid Glass control layer, SF Pro on Apple devices.
+   ============================================================ */
+
+:root{
+  /* brand — pulled from the app icon gradient */
+  --indigo:#5C4CED;
+  --violet:#A345E8;
+  --magenta:#C44BE0;
+  --grad: linear-gradient(125deg, #6A5BF2 0%, #9B49E6 52%, #C24BDC 100%);
+  --grad-soft: linear-gradient(125deg, #7B6CF5, #B65BEC);
+
+  /* surfaces */
+  --bg:#060509;
+  --bg-1:#08070d;
+  --bg-2:#0d0b15;
+  --ink:#f6f5fb;
+  --ink-2:#b9b5c9;
+  --ink-3:#76728a;
+  --line:rgba(255,255,255,.09);
+  --line-2:rgba(255,255,255,.14);
+
+  --glass:rgba(20,18,30,.55);
+  --glass-bright:rgba(255,255,255,.06);
+
+  --radius:22px;
+  --radius-lg:30px;
+  --maxw:1180px;
+
+  --font:-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Schibsted Grotesk", system-ui, sans-serif;
+  --mono:ui-monospace, "SF Mono", "SFMono-Regular", Menlo, monospace;
+  --serif:"Newsreader", Georgia, serif;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow-x:clip}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--font);
+  font-weight:450;
+  line-height:1.5;
+  overflow-x:clip;
+  letter-spacing:-0.01em;
+}
+::selection{background:rgba(155,73,230,.4);color:#fff}
+a{color:inherit;text-decoration:none}
+img{max-width:100%;display:block}
+
+/* ---------- atmosphere: grain + global glow ---------- */
+body::before{ /* film grain */
+  content:"";
+  position:fixed;inset:0;z-index:9999;pointer-events:none;
+  opacity:.04;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.glow{position:fixed;border-radius:50%;filter:blur(110px);opacity:.5;pointer-events:none;z-index:0}
+.glow.a{width:620px;height:620px;background:radial-gradient(circle,#5C4CED,transparent 68%);top:-180px;left:-140px}
+.glow.b{width:540px;height:540px;background:radial-gradient(circle,#A345E8,transparent 68%);top:240px;right:-160px;opacity:.4}
+
+/* ---------- layout ---------- */
+.wrap{width:100%;max-width:var(--maxw);margin:0 auto;padding:0 28px;position:relative;z-index:2}
+section{position:relative;z-index:2}
+
+.eyebrow{
+  display:inline-flex;align-items:center;gap:9px;
+  font-size:12.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-2);
+}
+.eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--grad);box-shadow:0 0 12px var(--violet)}
+
+.gtext{
+  background:var(--grad);
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;color:transparent;
+}
+
+/* ---------- buttons ---------- */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:9px;
+  font-family:var(--font);font-size:15.5px;font-weight:600;letter-spacing:-0.01em;
+  padding:14px 26px;border-radius:980px;border:1px solid transparent;
+  cursor:pointer;position:relative;transition:transform .35s cubic-bezier(.2,.9,.3,1), box-shadow .35s, background .3s;
+  white-space:nowrap;
+}
+.btn svg{width:17px;height:17px}
+.btn-primary{
+  background:var(--grad);color:#fff;
+  box-shadow:0 10px 34px -10px rgba(146,73,230,.8), inset 0 1px 0 rgba(255,255,255,.25);
+}
+.btn-primary:hover{transform:translateY(-2px) scale(1.015);box-shadow:0 18px 46px -10px rgba(146,73,230,.95), inset 0 1px 0 rgba(255,255,255,.35)}
+.btn-ghost{
+  background:var(--glass-bright);color:var(--ink);
+  border:1px solid var(--line-2);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+}
+.btn-ghost:hover{background:rgba(255,255,255,.11);transform:translateY(-2px)}
+.btn-lg{padding:17px 34px;font-size:17px}
+
+/* ============================================================
+   NAV
+   ============================================================ */
+header.nav{
+  position:fixed;top:0;left:0;right:0;z-index:1000;
+  display:flex;justify-content:center;
+  padding:18px 20px;
+  transition:padding .4s ease;
+}
+.nav-inner{
+  width:100%;max-width:var(--maxw);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:11px 13px 11px 20px;
+  border-radius:980px;
+  border:1px solid transparent;
+  transition:background .4s, border-color .4s, box-shadow .4s, backdrop-filter .4s;
+}
+header.nav.scrolled .nav-inner{
+  background:rgba(12,10,18,.62);
+  border-color:var(--line);
+  backdrop-filter:blur(22px) saturate(160%);
+  -webkit-backdrop-filter:blur(22px) saturate(160%);
+  box-shadow:0 12px 40px -16px rgba(0,0,0,.7);
+}
+.brand{display:flex;align-items:center;gap:11px;font-weight:700;font-size:18px;letter-spacing:-0.02em}
+.brand .mark{width:32px;height:32px;border-radius:9px;flex:0 0 auto;box-shadow:0 4px 14px -3px rgba(146,73,230,.7)}
+.nav-links{display:flex;align-items:center;gap:5px}
+.nav-links a{
+  font-size:14.5px;font-weight:500;color:var(--ink-2);
+  padding:9px 15px;border-radius:980px;transition:color .25s, background .25s;
+}
+.nav-links a:hover{color:var(--ink);background:rgba(255,255,255,.06)}
+.nav-cta{display:flex;align-items:center;gap:10px}
+.nav .btn{padding:11px 20px;font-size:14.5px}
+@media(max-width:860px){.nav-links{display:none}}
+
+/* ============================================================
+   HERO
+   ============================================================ */
+.hero{padding:172px 0 70px;text-align:center;overflow:hidden}
+.hero .eyebrow{margin-bottom:26px;opacity:0;animation:rise .9s .1s both}
+.hero h1{
+  font-size:clamp(46px, 8.2vw, 104px);
+  line-height:.97;font-weight:800;letter-spacing:-0.045em;
+  margin:0 auto 26px;max-width:14ch;
+}
+.hero h1 .line{display:block;opacity:0;animation:rise 1s both}
+.hero h1 .line:nth-child(1){animation-delay:.18s}
+.hero h1 .line:nth-child(2){animation-delay:.3s}
+.hero p.sub{
+  font-size:clamp(17px,2.1vw,21px);color:var(--ink-2);font-weight:450;
+  max-width:42ch;margin:0 auto 36px;line-height:1.5;
+  opacity:0;animation:rise 1s .44s both;
+}
+.hero .cta-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;opacity:0;animation:rise 1s .56s both}
+.hero .trust{
+  margin-top:24px;font-size:13.5px;color:var(--ink-3);
+  display:flex;gap:18px;justify-content:center;flex-wrap:wrap;align-items:center;
+  opacity:0;animation:rise 1s .7s both;
+}
+.hero .trust span{display:inline-flex;align-items:center;gap:7px}
+.hero .trust .sep{width:4px;height:4px;border-radius:50%;background:var(--ink-3);opacity:.6}
+
+@keyframes rise{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:translateY(0)}}
+
+/* ---------- hero stage: the Mac + notch demo ---------- */
+.stage{
+  margin:62px auto 0;max-width:880px;position:relative;
+  opacity:0;animation:rise 1.2s .8s both;
+}
+.stage-glow{
+  position:absolute;inset:-8% 6% auto 6%;height:70%;top:6%;
+  background:var(--grad);filter:blur(90px);opacity:.32;border-radius:50%;z-index:0;
+}
+.screen{
+  position:relative;z-index:1;
+  background:linear-gradient(170deg,#15131d,#0a0910);
+  border:1px solid var(--line-2);
+  border-radius:26px;
+  padding:0 0 30px;
+  box-shadow:0 50px 120px -40px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.08);
+  overflow:hidden;
+}
+/* the menu bar with the notch */
+.menubar{
+  height:30px;position:relative;
+  display:flex;align-items:center;justify-content:flex-end;gap:14px;
+  padding:0 18px;border-bottom:1px solid var(--line);
+  background:rgba(255,255,255,.02);
+}
+.menubar .mb-icon{width:15px;height:15px;opacity:.5}
+.notch{
+  position:absolute;top:0;left:50%;transform:translateX(-50%);
+  width:240px;height:34px;background:#000;
+  border-radius:0 0 18px 18px;z-index:5;
+  display:flex;align-items:center;justify-content:center;gap:12px;
+  padding:0 16px;
+  box-shadow:0 2px 10px rgba(0,0,0,.5);
+  transition:width .5s cubic-bezier(.3,.9,.3,1);
+}
+.notch.live{width:330px}
+.notch .nlabel{
+  font-size:11px;font-weight:600;color:#fff;white-space:nowrap;
+  letter-spacing:-0.01em;display:flex;align-items:center;gap:7px;
+}
+.notch .rec{width:7px;height:7px;border-radius:50%;background:#ff4d4d;box-shadow:0 0 9px #ff4d4d;animation:pulse 1.3s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+#wave{height:18px;width:120px}
+
+/* the document area where text types */
+.doc{
+  padding:34px 34px 6px;text-align:left;min-height:230px;
+}
+.doc .app-chip{
+  display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3);
+  font-weight:600;margin-bottom:18px;padding:5px 11px;border-radius:980px;
+  background:rgba(255,255,255,.04);border:1px solid var(--line);
+}
+.doc .app-chip .d{width:8px;height:8px;border-radius:50%;background:var(--grad)}
+.doc .typed{
+  font-size:clamp(18px,2.4vw,25px);line-height:1.45;font-weight:500;color:var(--ink);
+  letter-spacing:-0.02em;min-height:3.2em;
+}
+.doc .typed .caret{
+  display:inline-block;width:2.5px;height:1.05em;background:var(--violet);
+  vertical-align:-0.16em;margin-left:2px;border-radius:2px;animation:blink 1s steps(1) infinite;
+  box-shadow:0 0 10px var(--violet);
+}
+@keyframes blink{50%{opacity:0}}
+.doc .hint{
+  margin-top:20px;font-size:13px;color:var(--ink-3);display:flex;align-items:center;gap:8px;
+}
+.kbd{
+  display:inline-flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--ink-2);
+  padding:3px 9px;border-radius:7px;background:rgba(255,255,255,.06);
+  border:1px solid var(--line-2);box-shadow:0 2px 0 rgba(0,0,0,.4);min-width:34px;
+}
+
+/* ---------- logo marquee ---------- */
+.marquee-sec{padding:56px 0 10px;text-align:center}
+.marquee-sec .cap{font-size:13px;color:var(--ink-3);font-weight:600;letter-spacing:.06em;margin-bottom:22px}
+.marquee{
+  position:relative;overflow:hidden;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
+  mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
+}
+.marquee-track{display:flex;gap:54px;width:max-content;animation:scroll 34s linear infinite}
+.marquee:hover .marquee-track{animation-play-state:paused}
+.marquee-track span{
+  font-size:19px;font-weight:650;color:var(--ink-3);white-space:nowrap;
+  display:flex;align-items:center;gap:11px;opacity:.7;transition:color .3s;
+}
+.marquee-track span:hover{color:var(--ink)}
+@keyframes scroll{to{transform:translateX(-50%)}}
+
+/* ============================================================
+   SECTION SCAFFOLD
+   ============================================================ */
+.sec{padding:120px 0}
+.sec-head{max-width:740px;margin:0 auto 64px;text-align:center}
+.sec-head.left{text-align:left;margin-left:0}
+.sec-head .eyebrow{margin-bottom:20px}
+.sec-head h2{
+  font-size:clamp(34px,5vw,58px);line-height:1.03;font-weight:800;letter-spacing:-0.035em;margin-bottom:20px;
+}
+.sec-head p{font-size:clamp(17px,2vw,20px);color:var(--ink-2);line-height:1.5;max-width:46ch;margin:0 auto}
+.sec-head.left p{margin:0}
+
+/* progressive enhancement: content is visible by default; only hidden once JS marks <html class="js"> */
+.js [data-reveal]{opacity:0;transform:translateY(34px);transition:opacity .9s cubic-bezier(.2,.7,.3,1), transform .9s cubic-bezier(.2,.7,.3,1)}
+.js [data-reveal].in{opacity:1;transform:none}
+[data-reveal][data-d="1"]{transition-delay:.08s}
+[data-reveal][data-d="2"]{transition-delay:.16s}
+[data-reveal][data-d="3"]{transition-delay:.24s}
+[data-reveal][data-d="4"]{transition-delay:.32s}
+
+/* ============================================================
+   PRIVACY — the hero differentiator
+   ============================================================ */
+.privacy{
+  background:
+    radial-gradient(900px 480px at 50% -10%, rgba(92,76,237,.16), transparent 60%),
+    var(--bg-1);
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  text-align:center;overflow:hidden;
+}
+.privacy h2{font-size:clamp(38px,6.4vw,82px);line-height:1;font-weight:850;letter-spacing:-0.04em;max-width:16ch;margin:0 auto 24px}
+.privacy .lock{
+  width:78px;height:78px;margin:0 auto 34px;border-radius:22px;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--glass);border:1px solid var(--line-2);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  box-shadow:0 18px 50px -16px rgba(146,73,230,.55), inset 0 1px 0 rgba(255,255,255,.18);
+}
+.privacy .lock svg{width:36px;height:36px}
+.privacy p.lede{font-size:clamp(17px,2.1vw,21px);color:var(--ink-2);max-width:50ch;margin:0 auto 56px;line-height:1.55}
+.flow{
+  display:flex;align-items:center;justify-content:center;gap:0;flex-wrap:wrap;
+  max-width:760px;margin:0 auto;
+}
+.flow .node{
+  flex:1;min-width:150px;padding:26px 18px;border-radius:var(--radius);
+  background:var(--glass);border:1px solid var(--line);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+}
+.flow .node .ic{width:34px;height:34px;margin:0 auto 12px;color:var(--violet)}
+.flow .node .t{font-weight:700;font-size:15px;margin-bottom:4px}
+.flow .node .s{font-size:12.5px;color:var(--ink-3)}
+.flow .arrow{flex:0 0 auto;width:44px;color:var(--ink-3);display:flex;justify-content:center}
+.flow .node.blocked{position:relative;border-color:rgba(255,90,90,.25)}
+.flow .node.blocked .ic{color:#ff6b6b}
+.flow .node.blocked::after{
+  content:"✕ never";position:absolute;top:-11px;left:50%;transform:translateX(-50%);
+  font-size:10px;font-weight:700;letter-spacing:.05em;color:#ff7a7a;
+  background:#1a0c10;border:1px solid rgba(255,90,90,.3);padding:3px 9px;border-radius:980px;
+}
+@media(max-width:680px){.flow{flex-direction:column}.flow .arrow{transform:rotate(90deg)}}
+
+/* ============================================================
+   STATS
+   ============================================================ */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.stat{
+  padding:38px 26px;border-radius:var(--radius-lg);text-align:center;
+  background:linear-gradient(165deg, rgba(255,255,255,.045), rgba(255,255,255,.012));
+  border:1px solid var(--line);
+}
+.stat .num{font-size:clamp(38px,5vw,56px);font-weight:850;letter-spacing:-0.04em;line-height:1}
+.stat .lab{margin-top:12px;font-size:14px;color:var(--ink-2);font-weight:500;line-height:1.35}
+@media(max-width:860px){.stats{grid-template-columns:repeat(2,1fr)}}
+
+/* ============================================================
+   FEATURES — bento
+   ============================================================ */
+.bento{display:grid;grid-template-columns:repeat(6,1fr);gap:18px}
+.card{
+  position:relative;overflow:hidden;
+  border-radius:var(--radius-lg);
+  background:linear-gradient(165deg, rgba(255,255,255,.05), rgba(255,255,255,.014));
+  border:1px solid var(--line);
+  padding:30px;
+  transition:transform .5s cubic-bezier(.2,.8,.3,1), border-color .5s, background .5s;
+}
+.card:hover{transform:translateY(-5px);border-color:var(--line-2);background:linear-gradient(165deg, rgba(255,255,255,.07), rgba(255,255,255,.02))}
+.card .ficon{
+  width:48px;height:48px;border-radius:13px;margin-bottom:20px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(146,73,230,.14);border:1px solid rgba(146,73,230,.25);color:#c79bff;
+}
+.card .ficon svg{width:24px;height:24px}
+.card h3{font-size:20px;font-weight:700;letter-spacing:-0.02em;margin-bottom:9px}
+.card p{font-size:14.5px;color:var(--ink-2);line-height:1.5}
+.card.wide{grid-column:span 4}
+.card.third{grid-column:span 2}
+.card.half{grid-column:span 3}
+@media(max-width:920px){
+  .card.wide,.card.third,.card.half{grid-column:span 3}
+}
+@media(max-width:640px){
+  .bento{grid-template-columns:1fr}
+  .card.wide,.card.third,.card.half{grid-column:span 1}
+}
+
+/* glow accent on feature card */
+.card .spark{position:absolute;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle,rgba(146,73,230,.4),transparent 70%);top:-60px;right:-50px;opacity:0;transition:opacity .5s}
+.card:hover .spark{opacity:.6}
+
+/* ============================================================
+   CLEANUP before/after
+   ============================================================ */
+.cleanup-demo{
+  max-width:920px;margin:0 auto;
+  display:grid;grid-template-columns:1fr auto 1fr;gap:0;align-items:stretch;
+}
+.cl-card{
+  padding:32px;border-radius:var(--radius-lg);
+  background:linear-gradient(165deg, rgba(255,255,255,.045), rgba(255,255,255,.012));
+  border:1px solid var(--line);
+}
+.cl-card .tag{
+  display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:18px;
+}
+.cl-card.after .tag{color:#c79bff}
+.cl-card .body{font-size:18px;line-height:1.65;color:var(--ink-2);font-weight:450}
+.cl-card.after .body{color:var(--ink);font-weight:500}
+.cl-card .body .strike{color:#8d6b6b;text-decoration:line-through;text-decoration-color:rgba(255,90,90,.5)}
+.cl-card .body .add{color:#b78bff;font-weight:600}
+.cl-arrow{
+  display:flex;align-items:center;justify-content:center;width:74px;color:var(--violet);
+}
+.cl-arrow svg{width:30px;height:30px}
+@media(max-width:760px){
+  .cleanup-demo{grid-template-columns:1fr}
+  .cl-arrow{width:auto;height:60px}.cl-arrow svg{transform:rotate(90deg)}
+}
+
+/* ============================================================
+   HOW IT WORKS
+   ============================================================ */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.step{
+  padding:34px 30px;border-radius:var(--radius-lg);position:relative;
+  background:linear-gradient(165deg, rgba(255,255,255,.04), rgba(255,255,255,.01));
+  border:1px solid var(--line);
+}
+.step .n{
+  font-family:var(--mono);font-size:13px;font-weight:700;color:var(--violet);
+  letter-spacing:.1em;margin-bottom:20px;display:block;
+}
+.step .big{margin-bottom:18px;display:flex;align-items:center;gap:10px}
+.step h3{font-size:21px;font-weight:700;letter-spacing:-0.02em;margin-bottom:8px}
+.step p{font-size:14.5px;color:var(--ink-2);line-height:1.5}
+@media(max-width:760px){.steps{grid-template-columns:1fr}}
+
+/* ============================================================
+   FINAL CTA
+   ============================================================ */
+.final{
+  text-align:center;padding:150px 0;position:relative;overflow:hidden;
+  background:radial-gradient(800px 420px at 50% 120%, rgba(146,73,230,.22), transparent 60%);
+}
+.final h2{font-size:clamp(40px,7vw,92px);line-height:.98;font-weight:850;letter-spacing:-0.04em;max-width:15ch;margin:0 auto 28px}
+.final p{font-size:clamp(17px,2vw,20px);color:var(--ink-2);max-width:42ch;margin:0 auto 40px}
+.final .cta-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:26px}
+.final .req{font-size:13px;color:var(--ink-3);display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.final .req span{display:inline-flex;align-items:center;gap:7px}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-index:2}
+.foot{display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap}
+.foot .brand{font-size:16px}
+.foot .links{display:flex;gap:26px;flex-wrap:wrap}
+.foot .links a{font-size:14px;color:var(--ink-3);transition:color .25s}
+.foot .links a:hover{color:var(--ink)}
+.foot .copy{font-size:13px;color:var(--ink-3);width:100%;margin-top:8px}
+
+/* reduce motion */
+@media(prefers-reduced-motion:reduce){
+  *{animation:none!important;transition-duration:.01ms!important}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+
+<!-- atmosphere -->
+<div class="glow a"></div>
+<div class="glow b"></div>
+
+<!-- ===================== NAV ===================== -->
+<header class="nav" id="nav">
+  <div class="nav-inner">
+    <a href="#top" class="brand">
+      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="64" y2="64"><stop offset="0" stop-color="#6A5BF2"/><stop offset="1" stop-color="#C24BDC"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#lg)"/><g fill="#fff"><rect x="13" y="27" width="3.6" height="10" rx="1.8"/><rect x="20" y="22" width="3.6" height="20" rx="1.8"/><rect x="27" y="15" width="3.6" height="34" rx="1.8"/><rect x="34" y="20" width="3.6" height="24" rx="1.8"/><rect x="41" y="25" width="3.6" height="14" rx="1.8"/><rect x="48" y="29" width="3.6" height="6" rx="1.8"/></g></svg>
+      Murmur
+    </a>
+    <nav class="nav-links">
+      <a href="#privacy">Private</a>
+      <a href="#features">Features</a>
+      <a href="#speed">Speed</a>
+      <a href="#how">How it works</a>
+    </nav>
+    <div class="nav-cta">
+      <a href="https://github.com/marcelfernandes1/murmur" class="btn btn-ghost" style="padding:11px 18px">GitHub</a>
+      <a href="https://github.com/marcelfernandes1/murmur/releases/latest/download/Murmur.dmg" class="btn btn-primary" download>Download</a>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero" id="top">
+  <div class="wrap">
+    <span class="eyebrow"><span class="dot"></span> On-device dictation for macOS</span>
+    <h1>
+      <span class="line">Talk. It types.</span>
+      <span class="line"><span class="gtext">Everywhere.</span></span>
+    </h1>
+    <p class="sub">Hold one key and speak. Murmur turns your voice into text in any app — instantly, and entirely on your Mac. No cloud. No account. No one listening but you.</p>
+    <div class="cta-row">
+      <a href="https://github.com/marcelfernandes1/murmur/releases/latest/download/Murmur.dmg" class="btn btn-primary btn-lg" download>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.36 1.43c.04 1.05-.34 2.09-1.02 2.86-.7.8-1.85 1.42-2.96 1.33-.05-1.05.4-2.13 1.04-2.84.72-.81 1.96-1.4 2.94-1.35zM20.5 17.3c-.55 1.27-.81 1.84-1.52 2.96-.99 1.57-2.39 3.53-4.12 3.54-1.54.02-1.94-1-4.03-.99-2.09.01-2.53 1.01-4.07.99-1.73-.02-3.06-1.78-4.05-3.35C-.06 16.07-.36 10.9 1.36 8.15c1.22-1.96 3.16-3.1 4.98-3.1 1.85 0 3.02 1.02 4.55 1.02 1.49 0 2.4-1.02 4.54-1.02 1.62 0 3.34.88 4.56 2.4-4.01 2.2-3.36 7.92.51 9.85z"/></svg>
+        Download for Mac
+      </a>
+      <a href="#how" class="btn btn-ghost btn-lg">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M10 8l5 4-5 4z" fill="currentColor" stroke="none"/></svg>
+        See it work
+      </a>
+    </div>
+    <div class="trust">
+      <span>Free &amp; open source</span><span class="sep"></span>
+      <span>Apple Silicon · macOS 14+</span><span class="sep"></span>
+      <span>Works fully offline</span>
+    </div>
+
+    <!-- THE STAGE -->
+    <div class="stage">
+      <div class="stage-glow"></div>
+      <div class="screen">
+        <div class="menubar">
+          <div class="notch" id="notch">
+            <span class="nlabel" id="notchLabel"><span class="rec"></span> Listening</span>
+            <canvas id="wave" width="240" height="36"></canvas>
+          </div>
+          <svg class="mb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          <svg class="mb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        </div>
+        <div class="doc">
+          <span class="app-chip"><span class="d"></span> Messages — to Alex</span>
+          <div class="typed" id="typed"><span class="caret"></span></div>
+          <div class="hint">
+            <span>Hold</span> <span class="kbd">fn 🌐</span> <span>· speak · release. Your words land at the cursor.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== MARQUEE ===================== -->
+<section class="marquee-sec">
+  <div class="wrap">
+    <p class="cap">Dictate into any app you already use</p>
+  </div>
+  <div class="marquee">
+    <div class="marquee-track" id="mq">
+      <span>✉️ Mail</span><span>💬 Messages</span><span>📝 Notes</span><span>💼 Slack</span>
+      <span>🧠 Notion</span><span>⌨️ Terminal</span><span>📄 Pages</span><span>🐙 GitHub</span>
+      <span>✦ ChatGPT</span><span>📧 Gmail</span><span>🎨 Figma</span><span>📊 Linear</span>
+      <span>✉️ Mail</span><span>💬 Messages</span><span>📝 Notes</span><span>💼 Slack</span>
+      <span>🧠 Notion</span><span>⌨️ Terminal</span><span>📄 Pages</span><span>🐙 GitHub</span>
+      <span>✦ ChatGPT</span><span>📧 Gmail</span><span>🎨 Figma</span><span>📊 Linear</span>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PRIVACY ===================== -->
+<section class="sec privacy" id="privacy">
+  <div class="wrap">
+    <div class="lock" data-reveal>
+      <svg viewBox="0 0 24 24" fill="none" stroke="url(#plg)" stroke-width="1.8"><defs><linearGradient id="plg" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#7B6CF5"/><stop offset="1" stop-color="#C24BDC"/></linearGradient></defs><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.6" fill="url(#plg)" stroke="none"/></svg>
+    </div>
+    <h2 data-reveal data-d="1">Your voice never leaves<br/>your Mac.</h2>
+    <p class="lede" data-reveal data-d="2">Cloud dictation streams everything you say to someone else's servers. Murmur runs the entire pipeline — recording, transcription, and AI cleanup — on the Apple Neural Engine, right on your machine. Turn off Wi-Fi and it still works perfectly.</p>
+
+    <div class="flow" data-reveal data-d="2">
+      <div class="node">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+        <div class="t">You speak</div>
+        <div class="s">Mic → 16 kHz audio</div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h15M14 7l5 5-5 5"/></svg></div>
+      <div class="node">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="4"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg></div>
+        <div class="t">Neural Engine</div>
+        <div class="s">On-device transcribe + clean</div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h15M14 7l5 5-5 5"/></svg></div>
+      <div class="node">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h10"/></svg></div>
+        <div class="t">Typed in</div>
+        <div class="s">At your cursor, anywhere</div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h15M14 7l5 5-5 5"/></svg></div>
+      <div class="node blocked">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 10h1a4 4 0 0 1 0 8H7a5 5 0 0 1-1-9.9A6 6 0 0 1 17.7 9"/></svg></div>
+        <div class="t">The cloud</div>
+        <div class="s">0 bytes uploaded</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== SPEED / STATS ===================== -->
+<section class="sec" id="speed">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="dot"></span> Built for Apple Silicon</span>
+      <h2>Faster than you can type.<br/>By a lot.</h2>
+      <p>You think at 150 words a minute and type at 40. Murmur closes the gap — transcription runs on the Neural Engine in a fraction of real time, so your words appear almost as fast as you say them.</p>
+    </div>
+    <div class="stats">
+      <div class="stat" data-reveal data-d="1"><div class="num gtext" data-count="3" data-suffix="×">3×</div><div class="lab">faster than typing,<br/>on average</div></div>
+      <div class="stat" data-reveal data-d="2"><div class="num gtext" data-count="0.2" data-suffix="" data-dec="1">0.2</div><div class="lab">real-time factor<br/>on M-series chips</div></div>
+      <div class="stat" data-reveal data-d="3"><div class="num gtext" data-count="100" data-suffix="+">100+</div><div class="lab">languages with the<br/>Parakeet engine</div></div>
+      <div class="stat" data-reveal data-d="4"><div class="num gtext" data-count="0" data-suffix="$">$0</div><div class="lab">forever — free and<br/>open source</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FEATURES BENTO ===================== -->
+<section class="sec" id="features" style="padding-top:30px">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="dot"></span> Everything, on-device</span>
+      <h2>A dictation app that<br/>actually feels native.</h2>
+      <p>No menus to learn, no dock icon, no monthly bill. Just a key, your voice, and a few quiet touches that make it disappear into your workflow.</p>
+    </div>
+
+    <div class="bento">
+      <!-- smart cleanup wide -->
+      <div class="card wide" data-reveal data-d="1">
+        <span class="spark"></span>
+        <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3l1.5 4L11 8.5 6.5 10 5 14l-1.5-4L-1 8.5 3.5 7 5 3z" transform="translate(4 1)"/><path d="M18 13l.9 2.4L21 16l-2.1.6L18 19l-.9-2.4L15 16l2.1-.6L18 13z"/></svg></div>
+        <h3>Smart cleanup, locally</h3>
+        <p>An optional on-device language model polishes every dictation — removing “um” and “uh”, deleting false starts, turning “twenty twenty-six” into “2026”, and fixing punctuation. The Wispr-style formatting you love, with none of the cloud.</p>
+      </div>
+      <!-- two engines -->
+      <div class="card third" data-reveal data-d="2">
+        <span class="spark"></span>
+        <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2L4.5 13H11l-1 9 8.5-11H12l1-9z"/></svg></div>
+        <h3>Two speech engines</h3>
+        <p>Pick blazing-fast multilingual Parakeet, or Whisper for maximum accuracy with custom vocabulary and language pinning.</p>
+      </div>
+      <!-- notch -->
+      <div class="card third" data-reveal data-d="1">
+        <span class="spark"></span>
+        <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h2l2-6 3 14 3-18 3 14 2-4h3"/></svg></div>
+        <h3>Live notch waveform</h3>
+        <p>A glowing waveform flows from the MacBook notch while you talk, so you always know it’s listening.</p>
+      </div>
+      <!-- learns -->
+      <div class="card third" data-reveal data-d="2">
+        <span class="spark"></span>
+        <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a6 6 0 0 1 6 6c0 2-1 3-2 4s-1 2-1 3H9c0-1 0-2-1-3s-2-2-2-4a6 6 0 0 1 6-6z"/><path d="M9 20h6M10 23h4"/></svg></div>
+        <h3>Learns your words</h3>
+        <p>Fix a name or bit of jargon once and Murmur remembers it — quietly adding it to your personal vocabulary so it gets the spelling right next time.</p>
+      </div>
+      <!-- history -->
+      <div class="card third" data-reveal data-d="1">
+        <span class="spark"></span>
+        <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M3 12a9 9 0 0 1 9-9"/></svg></div>
+        <h3>Searchable history</h3>
+        <p>Every transcript is saved locally and instantly searchable — click any line to copy it back. Nothing is ever synced anywhere.</p>
+      </div>
+      <!-- menubar -->
+      <div class="card third" data-reveal data-d="1">
+        <span class="spark"></span>
+        <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M2 9h20"/><circle cx="5.5" cy="6.5" r=".6" fill="currentColor"/></svg></div>
+        <h3>Lives in the menu bar</h3>
+        <p>No dock icon, no window in your way. Murmur waits quietly until you hold your key.</p>
+      </div>
+      <!-- languages -->
+      <div class="card third" data-reveal data-d="2">
+        <span class="spark"></span>
+        <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 4 6 4 9s-1.5 6.5-4 9c-2.5-2.5-4-6-4-9s1.5-6.5 4-9z"/></svg></div>
+        <h3>Speaks your language</h3>
+        <p>Multilingual out of the box, with custom vocabulary and per-language pinning for names, code, and technical terms.</p>
+      </div>
+      <!-- offline -->
+      <div class="card third" data-reveal data-d="3">
+        <span class="spark"></span>
+        <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16z"/><path d="M2 12h20"/><path d="M5 18L19 6"/></svg></div>
+        <h3>Works on a plane</h3>
+        <p>No internet, no API keys, no subscription. Once the model is downloaded, everything runs offline, forever.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CLEANUP DEMO ===================== -->
+<section class="sec" style="padding-top:20px">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="dot"></span> Smart cleanup</span>
+      <h2>From mouth to polished,<br/>automatically.</h2>
+      <p>Speak the way you think — messy, with restarts and filler. Murmur’s on-device model hands back something you’d actually send.</p>
+    </div>
+    <div class="cleanup-demo" data-reveal>
+      <div class="cl-card">
+        <span class="tag"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg> What you say</span>
+        <p class="body">“um so <span class="strike">i think we should</span> can we move the meeting to like <span class="strike">uh</span> twenty twenty six no wait <span class="strike">friday</span> next friday at <span class="strike">three</span> two thirty”</p>
+      </div>
+      <div class="cl-arrow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h15M14 7l5 5-5 5"/></svg>
+      </div>
+      <div class="cl-card after">
+        <span class="tag"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg> What gets typed</span>
+        <p class="body">“Can we move the meeting to <span class="add">next Friday at 2:30</span>?”</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== HOW IT WORKS ===================== -->
+<section class="sec" id="how" style="padding-top:30px">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="dot"></span> Three steps, zero learning curve</span>
+      <h2>You already know how<br/>to use it.</h2>
+    </div>
+    <div class="steps">
+      <div class="step" data-reveal data-d="1">
+        <span class="n">STEP 01</span>
+        <div class="big"><span class="kbd" style="font-size:14px;padding:8px 14px">fn 🌐</span></div>
+        <h3>Hold the key</h3>
+        <p>Press and hold the Fn / Globe key — or set your own shortcut. The notch lights up to confirm it’s listening.</p>
+      </div>
+      <div class="step" data-reveal data-d="2">
+        <span class="n">STEP 02</span>
+        <div class="big"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="url(#slg)" stroke-width="1.8"><defs><linearGradient id="slg" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#7B6CF5"/><stop offset="1" stop-color="#C24BDC"/></linearGradient></defs><path d="M12 3a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+        <h3>Just talk</h3>
+        <p>Speak naturally, at your own pace. A live waveform shows Murmur hearing every word, on-device.</p>
+      </div>
+      <div class="step" data-reveal data-d="3">
+        <span class="n">STEP 03</span>
+        <div class="big"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="url(#slg)" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h10"/></svg></div>
+        <h3>Release — it’s typed</h3>
+        <p>Let go and your polished text appears right at the cursor. No text field focused? It’s copied to your clipboard instead.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FINAL CTA ===================== -->
+<section class="final" id="download">
+  <div class="wrap">
+    <h2 data-reveal>Stop typing.<br/><span class="gtext">Start talking.</span></h2>
+    <p data-reveal data-d="1">Free, open source, and 100% private. Download Murmur and give your fingers a rest.</p>
+    <div class="cta-row" data-reveal data-d="2">
+      <a href="https://github.com/marcelfernandes1/murmur/releases/latest/download/Murmur.dmg" class="btn btn-primary btn-lg" download>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.36 1.43c.04 1.05-.34 2.09-1.02 2.86-.7.8-1.85 1.42-2.96 1.33-.05-1.05.4-2.13 1.04-2.84.72-.81 1.96-1.4 2.94-1.35zM20.5 17.3c-.55 1.27-.81 1.84-1.52 2.96-.99 1.57-2.39 3.53-4.12 3.54-1.54.02-1.94-1-4.03-.99-2.09.01-2.53 1.01-4.07.99-1.73-.02-3.06-1.78-4.05-3.35C-.06 16.07-.36 10.9 1.36 8.15c1.22-1.96 3.16-3.1 4.98-3.1 1.85 0 3.02 1.02 4.55 1.02 1.49 0 2.4-1.02 4.54-1.02 1.62 0 3.34.88 4.56 2.4-4.01 2.2-3.36 7.92.51 9.85z"/></svg>
+        Download for macOS
+      </a>
+      <a href="https://github.com/marcelfernandes1/murmur" class="btn btn-ghost btn-lg">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.8c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+    <div class="req" data-reveal data-d="3">
+      <span>✓ Apple Silicon (M1+)</span>
+      <span>✓ macOS 14 or later</span>
+      <span>✓ No account required</span>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FOOTER ===================== -->
+<footer>
+  <div class="wrap foot">
+    <a href="#top" class="brand">
+      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="url(#lg)"/><g fill="#fff"><rect x="13" y="27" width="3.6" height="10" rx="1.8"/><rect x="20" y="22" width="3.6" height="20" rx="1.8"/><rect x="27" y="15" width="3.6" height="34" rx="1.8"/><rect x="34" y="20" width="3.6" height="24" rx="1.8"/><rect x="41" y="25" width="3.6" height="14" rx="1.8"/><rect x="48" y="29" width="3.6" height="6" rx="1.8"/></g></svg>
+      Murmur
+    </a>
+    <div class="links">
+      <a href="#privacy">Privacy</a>
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="https://github.com/marcelfernandes1/murmur">GitHub</a>
+      <a href="https://github.com/marcelfernandes1/murmur/releases/latest/download/Murmur.dmg" download>Download</a>
+    </div>
+    <p class="copy">A fast, 100% on-device dictation app for macOS. Your voice stays yours. © 2026 Murmur.</p>
+  </div>
+</footer>
+
+<script>
+/* ---------- nav scroll state ---------- */
+const nav = document.getElementById('nav');
+const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 24);
+onScroll(); window.addEventListener('scroll', onScroll, {passive:true});
+
+/* ---------- reveal on scroll (with bulletproof fallbacks) ---------- */
+const revealEls = document.querySelectorAll('[data-reveal]');
+const reveal = el => el.classList.add('in');
+const sweep = () => revealEls.forEach(el => { if(el.getBoundingClientRect().top < window.innerHeight * 0.94) reveal(el); });
+if('IntersectionObserver' in window){
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting){ reveal(e.target); io.unobserve(e.target); } });
+  },{threshold:.12, rootMargin:'0px 0px -6% 0px'});
+  revealEls.forEach(el=>io.observe(el));
+  // safety nets: reveal in-view content even if the observer is slow, and as the user scrolls.
+  setTimeout(sweep, 500);
+  window.addEventListener('scroll', sweep, {passive:true});
+  window.addEventListener('load', ()=>setTimeout(sweep, 150));
+} else {
+  revealEls.forEach(reveal);  // no IO support → just show everything
+}
+
+/* ---------- count-up stats ---------- */
+const countObs = new IntersectionObserver((entries)=>{
+  entries.forEach(e=>{
+    if(!e.isIntersecting) return;
+    const el = e.target;
+    const target = parseFloat(el.dataset.count);
+    const suffix = el.dataset.suffix || '';
+    const dec = parseInt(el.dataset.dec || '0');
+    const prefix = suffix === '$' ? '$' : '';
+    const isMoney = suffix === '$';
+    let start = null; const dur = 1100;
+    const step = (ts)=>{
+      if(start===null) start = ts;
+      const p = Math.min((ts-start)/dur, 1);
+      const eased = 1 - Math.pow(1-p, 3);
+      const val = target * eased;
+      el.textContent = isMoney ? '$'+Math.round(val) : (val.toFixed(dec) + (suffix && !isMoney ? suffix : ''));
+      if(p<1) requestAnimationFrame(step);
+      else el.textContent = isMoney ? '$'+target : (target.toFixed(dec) + (suffix && !isMoney ? suffix : ''));
+    };
+    requestAnimationFrame(step);
+    countObs.unobserve(el);
+  });
+},{threshold:.6});
+document.querySelectorAll('[data-count]').forEach(el=>countObs.observe(el));
+
+/* ---------- hero waveform (canvas) ---------- */
+(function(){
+  const canvas = document.getElementById('wave');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  const W = canvas.width, H = canvas.height;
+  canvas.width = W*dpr; canvas.height = H*dpr; ctx.scale(dpr,dpr);
+  const bars = 30; const gap = 3;
+  const bw = (W - gap*(bars-1)) / bars;
+  let t = 0; let amp = 0.25;
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    const grad = ctx.createLinearGradient(0,0,W,0);
+    grad.addColorStop(0,'#7B6CF5'); grad.addColorStop(1,'#C24BDC');
+    ctx.fillStyle = grad;
+    for(let i=0;i<bars;i++){
+      const center = (i/(bars-1)) - .5;
+      const env = Math.cos(center*Math.PI)*0.85 + 0.15;       // taper at edges
+      const wobble = Math.sin(t*2.2 + i*0.55) * 0.5 + 0.5;
+      const fast = Math.sin(t*5 + i*1.3) * 0.5 + 0.5;
+      const h = Math.max(2, (wobble*0.6 + fast*0.4) * amp * env * H);
+      const x = i*(bw+gap);
+      const y = (H-h)/2;
+      const r = bw/2;
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(x,y,bw,h,r); else ctx.rect(x,y,bw,h);
+      ctx.fill();
+    }
+    t += reduce ? 0 : 0.045;
+    // breathe amplitude so it feels alive
+    amp = 0.4 + Math.sin(t*0.7)*0.28;
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+/* ---------- typing demo cycling phrases ---------- */
+(function(){
+  const el = document.getElementById('typed');
+  const notch = document.getElementById('notch');
+  const label = document.getElementById('notchLabel');
+  if(!el) return;
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const phrases = [
+    "Hey Alex — running five minutes late, grab us a table by the window?",
+    "Can we move the standup to 2:30 tomorrow? I have a conflict at noon.",
+    "Ship the fix to staging, then let's review before the 5pm release.",
+    "Thanks so much for the notes — I'll send the revised draft tonight."
+  ];
+  const caret = '<span class="caret"></span>';
+  let pi = 0;
+
+  function setLabel(html){ label.innerHTML = html; }
+
+  if(reduce){
+    el.innerHTML = phrases[0] + caret;
+    notch.classList.add('live');
+    return;
+  }
+
+  function typePhrase(text, done){
+    notch.classList.add('live');
+    setLabel('<span class="rec"></span> Listening');
+    let i = 0;
+    const tick = ()=>{
+      i++;
+      el.innerHTML = text.slice(0,i) + caret;
+      if(i < text.length){
+        // vary speed slightly for a human cadence
+        setTimeout(tick, 22 + Math.random()*40);
+      } else {
+        setLabel('✓ Inserted');
+        setTimeout(()=>{ notch.classList.remove('live'); }, 900);
+        setTimeout(done, 2200);
+      }
+    };
+    setTimeout(tick, 650);
+  }
+
+  function loop(){
+    const text = phrases[pi % phrases.length];
+    typePhrase(text, ()=>{
+      // erase quickly
+      let cur = text.length;
+      const erase = ()=>{
+        cur -= 3;
+        if(cur <= 0){ el.innerHTML = caret; pi++; setTimeout(loop, 350); }
+        else { el.innerHTML = text.slice(0,cur) + caret; setTimeout(erase, 16); }
+      };
+      setTimeout(erase, 300);
+    });
+  }
+  // start once the stage is in view
+  const startObs = new IntersectionObserver((ents)=>{
+    ents.forEach(e=>{ if(e.isIntersecting){ loop(); startObs.disconnect(); } });
+  },{threshold:.3});
+  startObs.observe(document.querySelector('.stage'));
+})();
+
+/* ---------- magnetic primary buttons ---------- */
+document.querySelectorAll('.btn-primary').forEach(btn=>{
+  btn.addEventListener('mousemove', e=>{
+    const r = btn.getBoundingClientRect();
+    const mx = (e.clientX - r.left - r.width/2) * 0.18;
+    const my = (e.clientY - r.top - r.height/2) * 0.3;
+    btn.style.transform = `translate(${mx}px, ${my-2}px) scale(1.02)`;
+  });
+  btn.addEventListener('mouseleave', ()=>{ btn.style.transform=''; });
+});
+</script>
+</body>
+</html>

@@ -152,6 +152,14 @@ echo "==> Notarizing DMG…"
 xcrun notarytool submit "$DMG" "${notary_args[@]}" --wait
 xcrun stapler staple "$DMG"
 
+# Publish a second copy under a stable, un-versioned name so the website can link
+# to the newest build via releases/latest/download/Murmur.dmg and never go stale.
+# It's a byte-copy of the notarized + stapled DMG (the ticket is embedded, so the
+# copy is just as valid). Sparkle still updates via the versioned name in the
+# appcast — keep this OUT of $APPCAST_SRC so generate_appcast ignores it.
+STABLE_DMG="$DIST_DIR/Murmur.dmg"
+cp "$DMG" "$STABLE_DMG"
+
 # --- Sparkle appcast -------------------------------------------------------
 # generate_appcast signs the DMG with the EdDSA key in the keychain and emits
 # appcast.xml whose enclosure points at this version's GitHub release asset.
@@ -170,6 +178,7 @@ rm -f "$DIST_DIR/appcast.xml"
 echo
 echo "Done:"
 echo "  $DMG"
+echo "  $STABLE_DMG  (stable alias for releases/latest/download/Murmur.dmg)"
 echo "  $DIST_DIR/appcast.xml"
 spctl -a -vv -t exec "$APP" 2>&1 | sed 's/^/  /' || true
 
@@ -178,9 +187,9 @@ if [[ "$publish" -eq 1 ]]; then
   command -v gh >/dev/null || { echo "error: gh CLI required for --publish" >&2; exit 1; }
   echo "==> Publishing GitHub release $TAG…"
   if gh release view "$TAG" >/dev/null 2>&1; then
-    gh release upload "$TAG" "$DMG" "$DIST_DIR/appcast.xml" --clobber
+    gh release upload "$TAG" "$DMG" "$STABLE_DMG" "$DIST_DIR/appcast.xml" --clobber
   else
-    gh release create "$TAG" "$DMG" "$DIST_DIR/appcast.xml" \
+    gh release create "$TAG" "$DMG" "$STABLE_DMG" "$DIST_DIR/appcast.xml" \
       --target main --title "Murmur $VERSION" --generate-notes
   fi
   echo "Released: https://github.com/$REPO_SLUG/releases/tag/$TAG"
