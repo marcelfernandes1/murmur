@@ -106,7 +106,16 @@ actor WhisperService: SpeechEngine {
             // "Preparing model…" phase, so `.ready` is truthful. Without it
             // WhisperKit only downloads and defers the heavy load into the first
             // transcribe, where it looks like an endless transcription.
-            let config = WhisperKitConfig(model: name, computeOptions: compute, load: true)
+            //
+            // `downloadBase` MUST be set: WhisperKit downloads via swift-transformers'
+            // Hub, whose default base is ~/Documents/huggingface. Writing there trips
+            // the macOS "would like to access your Documents folder" TCC prompt — a
+            // terrible look for a privacy-first local app, and the wrong home for
+            // hundreds of MB of model files. Keep models alongside the rest of our
+            // data under ~/Library/Application Support/Murmur (matches HistoryStore).
+            let support = URL.applicationSupportDirectory.appending(path: "Murmur", directoryHint: .isDirectory)
+            try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+            let config = WhisperKitConfig(model: name, downloadBase: support, computeOptions: compute, load: true)
             let kit = try await WhisperKit(config)
             notify?(.ready)
             return kit
