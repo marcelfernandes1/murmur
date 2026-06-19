@@ -353,7 +353,7 @@ struct SettingsView: View {
         } header: {
             Text("Speech model")
         } footer: {
-            Text("Runs on-device. Switching models downloads the new one on first use.")
+            Text("Runs on-device. Switching models downloads the new one on first use — the larger whisper.cpp models are 1–3 GB, so the first run can take a while. whisper.cpp models run on the GPU (Metal); WhisperKit models use the Neural Engine.")
         }
 
         Section {
@@ -392,7 +392,11 @@ struct SettingsView: View {
     private func statusText(_ phase: AppState.ModelPhase) -> String {
         switch phase {
         case .idle: return "Idle"
-        case .preparing: return "Preparing…"
+        case .preparing:
+            if let progress = appState.modelDownloadProgress {
+                return "Downloading… \(Int(progress * 100))%"
+            }
+            return "Preparing…"
         case .ready: return "Ready"
         case .failed(let message): return "Failed: \(message)"
         }

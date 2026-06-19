@@ -24,6 +24,10 @@ final class AppState {
 
     var status: Status = .idle
     var modelPhase: ModelPhase = .idle
+    /// While `modelPhase == .preparing`, the fraction (0…1) of the model's weights
+    /// downloaded so far, or nil when the size is unknown / not downloading. Lets
+    /// the UI show "Downloading 42%" for the large whisper.cpp ggml files.
+    var modelDownloadProgress: Double?
     /// Load state of the optional smart-cleanup LLM.
     var cleanupPhase: ModelPhase = .idle
 

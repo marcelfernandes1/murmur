@@ -50,6 +50,7 @@ final class DictationController {
         switch choice.engine {
         case .whisper: return WhisperService(modelName: choice.whisperKitName)
         case .parakeet: return ParakeetService()
+        case .whisperCpp: return WhisperCppService(fileName: choice.ggmlFileName)
         }
     }
 
@@ -151,7 +152,7 @@ final class DictationController {
 
     private func handleCleanupState(_ state: EngineLoadState) {
         switch state {
-        case .preparing: appState.cleanupPhase = .preparing
+        case .preparing, .downloading: appState.cleanupPhase = .preparing
         case .ready: appState.cleanupPhase = .ready
         case .failed(let message): appState.cleanupPhase = .failed(message)
         }
@@ -183,13 +184,20 @@ final class DictationController {
     private func handleModelState(_ state: EngineLoadState) {
         switch state {
         case .preparing:
+            appState.modelDownloadProgress = nil
             appState.modelPhase = .preparing
             if awaitingResult { notch.showPreparing("Preparing model… (first run can take a couple minutes)") }
+        case .downloading(let fraction):
+            appState.modelDownloadProgress = fraction
+            appState.modelPhase = .preparing
+            if awaitingResult { notch.showPreparing("Downloading model… \(Int(fraction * 100))%") }
         case .ready:
+            appState.modelDownloadProgress = nil
             appState.modelPhase = .ready
             if awaitingResult { notch.showTranscribing() }
             warmOtherModels()
         case .failed(let message):
+            appState.modelDownloadProgress = nil
             appState.modelPhase = .failed(message)
             if awaitingResult {
                 awaitingResult = false
@@ -211,7 +219,12 @@ final class DictationController {
         Task.detached(priority: .background) {
             // Let the just-loaded model settle before competing for the ANE.
             try? await Task.sleep(for: .seconds(5))
-            for choice in Preferences.ModelChoice.allCases where choice != selected {
+            // Only warm the original WhisperKit/Parakeet models. The whisper.cpp
+            // matrix is a large set of opt-in *testing* models (up to 3 GB each) —
+            // blanket-warming them would silently download tens of GB. Those fetch
+            // on demand the first time the user actually selects one.
+            for choice in Preferences.ModelChoice.allCases
+            where choice != selected && choice.engine != .whisperCpp {
                 let engine = await MainActor.run { Self.makeEngine(for: choice) }
                 await engine.preload()
             }
