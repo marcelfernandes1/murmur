@@ -35,6 +35,37 @@ final class DictationController {
     private var didWarmOthers = false
     private var streamTask: Task<Void, Never>?
     private var undoClearTask: Task<Void, Never>?
+    private var errorClearTask: Task<Void, Never>?
+
+    /// Wall-clock trigger-down instant, used to tell an accidental tap (released
+    /// almost immediately) from a real hold that happened to capture nothing.
+    private let recordingClock = ContinuousClock()
+    private var recordingStartedAt: ContinuousClock.Instant?
+
+    /// Hold the trigger for less than this and capture no audio ⇒ treat it as an
+    /// accidental tap, not a failure — so a stray brush never flashes a warning
+    /// (or leaves the menu-bar icon stuck on it). Comfortably longer than a brush,
+    /// shorter than a real one-word dictation.
+    private static let minIntentionalHold: Duration = .milliseconds(400)
+
+    /// What a just-ended recording's buffer warrants. Pure decision, kept out of
+    /// `endRecording` so it can be exercised by `runCaptureSelfTest`.
+    enum CaptureOutcome: Equatable {
+        case accidentalTap   // too short to be real + the trigger was barely held
+        case noAudio         // held a real beat but the engine delivered ~nothing
+        case noSignal        // audio arrived but it's digital silence (dead mic)
+        case transcribe      // good buffer — go transcribe it
+    }
+
+    /// `held` is the wall-clock trigger hold (nil if unknown ⇒ never an accidental tap).
+    static func captureOutcome(sampleCount: Int, held: Duration?, peak: Float) -> CaptureOutcome {
+        if sampleCount < 1_600 { // < 0.1 s at 16 kHz
+            if let held, held < minIntentionalHold { return .accidentalTap }
+            return .noAudio
+        }
+        if peak < 0.0005 { return .noSignal }
+        return .transcribe
+    }
 
     init(appState: AppState, history: HistoryStore, preferences: Preferences, vocabulary: VocabularyStore, corrections: CorrectionStore) {
         self.appState = appState
@@ -93,6 +124,9 @@ final class DictationController {
         if ProcessInfo.processInfo.environment["MURMUR_TEST_CORRECTIONS"] != nil {
             CorrectionDetector.runSelfTest()
             CorrectionStore.runSelfTest()
+        }
+        if ProcessInfo.processInfo.environment["MURMUR_TEST_CAPTURE"] != nil {
+            Self.runCaptureSelfTest()
         }
 
         attachStateHandler(to: engine)
@@ -236,6 +270,8 @@ final class DictationController {
     private func beginRecording() {
         guard !isRecording else { return }
         isRecording = true
+        recordingStartedAt = recordingClock.now
+        errorClearTask?.cancel()
         // A new dictation supersedes watching the previous field for edits.
         editWatcher.cancel()
         // The notch live preview only makes sense on a fast, non-autoregressive
@@ -258,8 +294,7 @@ final class DictationController {
                 }
             } catch {
                 isRecording = false
-                appState.status = .error(error.localizedDescription)
-                notch.showError(error.localizedDescription)
+                flagError(.error(error.localizedDescription), notch: error.localizedDescription)
             }
         }
     }
@@ -294,26 +329,34 @@ final class DictationController {
         streamTask = nil
 
         let samples = recorder.stop(reason: .hotkeyReleased)
+        let held = recordingStartedAt.map { recordingClock.now - $0 }
+        recordingStartedAt = nil
         let duration = Double(samples.count) / 16_000.0
         let peak = recorder.peakAmplitude
         Self.audioLog.log("endRecording: samples=\(samples.count, privacy: .public) duration=\(duration, privacy: .public)s peak=\(peak, privacy: .public)")
 
-        // Don't advance to Transcribing/Polishing on an empty or too-short buffer —
-        // that's the "records, then nothing comes out" symptom (the engine never
-        // delivered any audio). Report it instead of transcribing silence.
-        if samples.count < 1_600 { // < 0.1 s at 16 kHz
-            appState.status = .error("No audio captured")
-            notch.showError("No audio captured — check mic & input device")
+        // Decide what to do with the buffer (pure + unit-tested — see runCaptureSelfTest).
+        switch Self.captureOutcome(sampleCount: samples.count, held: held, peak: peak) {
+        case .accidentalTap:
+            // A quick brush of the trigger that captured nothing — the user never
+            // meant to dictate. Drop it silently so it doesn't flash a warning or
+            // leave the menu-bar icon stuck on one.
+            appState.status = .idle
+            notch.dismiss()
             return
-        }
-
-        // A working mic always has some noise floor; essentially-zero peak means
-        // the input delivered digital silence (no Mic permission, a muted/wrong
-        // device, etc.). Transcribing that is pointless — flag it instead.
-        if peak < 0.0005 {
-            appState.status = .error("No microphone signal")
-            notch.showError("No mic signal — check input & permission")
+        case .noAudio:
+            // Held the trigger a real beat but the engine delivered nothing — the
+            // "records, then nothing comes out" symptom. Worth surfacing.
+            flagError(.error("No audio captured"), notch: "No audio captured — check mic & input device")
             return
+        case .noSignal:
+            // A working mic always has some noise floor; essentially-zero peak means
+            // the input delivered digital silence (no Mic permission, a muted/wrong
+            // device, etc.). Transcribing that is pointless — flag it instead.
+            flagError(.error("No microphone signal"), notch: "No mic signal — check input & permission")
+            return
+        case .transcribe:
+            break
         }
 
         awaitingResult = true
@@ -364,11 +407,60 @@ final class DictationController {
                 deliver(text, original: rawTranscript)
                 appState.status = .idle
             } catch {
-                appState.status = .error(error.localizedDescription)
-                notch.showError(error.localizedDescription)
+                flagError(.error(error.localizedDescription), notch: error.localizedDescription)
             }
             awaitingResult = false
         }
+    }
+
+    /// Surface a recoverable error in the notch + menu-bar icon, then quietly
+    /// revert to idle so the warning glyph doesn't linger until the next
+    /// dictation. Guarded: if a new dictation (or a different error) changes the
+    /// status during the window, the pending revert leaves it alone.
+    private func flagError(_ status: AppState.Status, notch message: String) {
+        errorClearTask?.cancel()
+        appState.status = status
+        notch.showError(message)
+        errorClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard let self, self.appState.status == status else { return }
+            self.appState.status = .idle
+        }
+    }
+
+    /// Env-gated self-test for the capture decision (mirrors CorrectionDetector.runSelfTest).
+    /// Run with: `MURMUR_TEST_CAPTURE=1 open Murmur.app` and read the log for PASS/FAIL.
+    static func runCaptureSelfTest() {
+        struct Case { let name: String; let samples: Int; let held: Duration?; let peak: Float; let expect: CaptureOutcome }
+        let cases: [Case] = [
+            // The reported bug: a light, accidental tap captures nothing → no warning.
+            .init(name: "accidental brush (50 ms, empty)", samples: 0, held: .milliseconds(50), peak: 0, expect: .accidentalTap),
+            .init(name: "quick tap (200 ms, empty)", samples: 0, held: .milliseconds(200), peak: 0, expect: .accidentalTap),
+            // Held a real beat but nothing came back → the genuine "records, nothing out" bug.
+            .init(name: "real hold, no audio (2 s, empty)", samples: 0, held: .seconds(2), peak: 0, expect: .noAudio),
+            // Just under / over the threshold boundary.
+            .init(name: "just under threshold (399 ms, empty)", samples: 0, held: .milliseconds(399), peak: 0, expect: .accidentalTap),
+            .init(name: "just over threshold (401 ms, empty)", samples: 0, held: .milliseconds(401), peak: 0, expect: .noAudio),
+            // Unknown hold time must never be silently dropped.
+            .init(name: "empty, hold unknown", samples: 0, held: nil, peak: 0, expect: .noAudio),
+            // A tiny-but-nonzero buffer from a quick tap is still an accidental tap.
+            .init(name: "few samples, quick tap", samples: 800, held: .milliseconds(120), peak: 0.2, expect: .accidentalTap),
+            // Enough audio but digital silence → dead-mic warning, regardless of hold.
+            .init(name: "silent mic (3 s, flat)", samples: 48_000, held: .seconds(3), peak: 0.0001, expect: .noSignal),
+            // A normal, valid dictation transcribes.
+            .init(name: "valid dictation (3 s)", samples: 48_000, held: .seconds(3), peak: 0.3, expect: .transcribe),
+            // A short-but-real word (held past the threshold, audible) transcribes.
+            .init(name: "short word (600 ms, audible)", samples: 9_600, held: .milliseconds(600), peak: 0.15, expect: .transcribe),
+        ]
+        var passed = 0
+        for c in cases {
+            let got = captureOutcome(sampleCount: c.samples, held: c.held, peak: c.peak)
+            let ok = got == c.expect
+            if ok { passed += 1 }
+            print("[CaptureOutcome] \(ok ? "PASS" : "FAIL") \(c.name)  got=\(got) expect=\(c.expect)")
+        }
+        print("[CaptureOutcome] \(passed)/\(cases.count) passed")
+        fflush(stdout) // GUI launch block-buffers stdout; flush so the result is observable.
     }
 
     private func deliver(_ text: String, original: String? = nil) {
