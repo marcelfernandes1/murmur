@@ -7,24 +7,75 @@ import ServiceManagement
 @Observable
 final class Preferences {
     enum ModelChoice: String, CaseIterable, Identifiable {
+        // WhisperKit (Core ML / ANE) and Parakeet (FluidAudio) — the original engines.
         case parakeet
         case base
         case small
         case turbo = "large-v3_turbo_954MB"
 
-        enum Engine { case whisper, parakeet }
+        // whisper.cpp (Metal) — the full ggml matrix for speed/accuracy testing.
+        // rawValue is the exact ggml filename stem; the `.bin` is at
+        // huggingface.co/ggerganov/whisper.cpp. `.en` = English-only (more accurate
+        // per size); Q5/Q8 = quantized (smaller + faster, slight accuracy cost).
+        case cppTiny = "ggml-tiny"
+        case cppTinyEn = "ggml-tiny.en"
+        case cppBase = "ggml-base"
+        case cppBaseEn = "ggml-base.en"
+        case cppSmall = "ggml-small"
+        case cppSmallEn = "ggml-small.en"
+        case cppSmallQ5 = "ggml-small-q5_1"
+        case cppMedium = "ggml-medium"
+        case cppMediumEn = "ggml-medium.en"
+        case cppMediumQ5 = "ggml-medium-q5_0"
+        case cppMediumEnQ5 = "ggml-medium.en-q5_0"
+        case cppLargeV2 = "ggml-large-v2"
+        case cppLargeV2Q5 = "ggml-large-v2-q5_0"
+        case cppLargeV3 = "ggml-large-v3"
+        case cppLargeV3Q5 = "ggml-large-v3-q5_0"
+        case cppLargeV3Turbo = "ggml-large-v3-turbo"
+        case cppLargeV3TurboQ5 = "ggml-large-v3-turbo-q5_0"
+        case cppLargeV3TurboQ8 = "ggml-large-v3-turbo-q8_0"
+
+        enum Engine { case whisper, parakeet, whisperCpp }
 
         var id: String { rawValue }
-        var engine: Engine { self == .parakeet ? .parakeet : .whisper }
-        /// WhisperKit model name (unused for Parakeet).
+
+        var engine: Engine {
+            if self == .parakeet { return .parakeet }
+            if rawValue.hasPrefix("ggml-") { return .whisperCpp }
+            return .whisper
+        }
+
+        /// WhisperKit model name (only meaningful for the `.whisper` engine).
         var whisperKitName: String { rawValue }
+
+        /// ggml weights filename (only meaningful for the `.whisperCpp` engine).
+        var ggmlFileName: String { rawValue + ".bin" }
 
         var displayName: String {
             switch self {
             case .parakeet: return "Parakeet TDT 0.6B v3 — fastest, multilingual (~600 MB)"
-            case .base: return "Whisper Base — fast (~145 MB)"
-            case .small: return "Whisper Small — balanced, multilingual (~480 MB)"
-            case .turbo: return "Whisper Large v3 Turbo — accurate, multilingual (~950 MB)"
+            case .base: return "Whisper Base (Core ML) — fast (~145 MB)"
+            case .small: return "Whisper Small (Core ML) — balanced, multilingual (~480 MB)"
+            case .turbo: return "Whisper Large v3 Turbo (Core ML) — accurate, multilingual (~950 MB)"
+            case .cppTiny: return "whisper.cpp: Tiny — fastest, least accurate (78 MB)"
+            case .cppTinyEn: return "whisper.cpp: Tiny (English) — fastest (78 MB)"
+            case .cppBase: return "whisper.cpp: Base — fast (148 MB)"
+            case .cppBaseEn: return "whisper.cpp: Base (English) — fast (148 MB)"
+            case .cppSmall: return "whisper.cpp: Small — balanced (488 MB)"
+            case .cppSmallEn: return "whisper.cpp: Small (English) — balanced (488 MB)"
+            case .cppSmallQ5: return "whisper.cpp: Small Q5 — balanced, smaller (190 MB)"
+            case .cppMedium: return "whisper.cpp: Medium — more accurate, slower (1.5 GB)"
+            case .cppMediumEn: return "whisper.cpp: Medium (English) — more accurate (1.5 GB)"
+            case .cppMediumQ5: return "whisper.cpp: Medium Q5 — accurate, smaller (539 MB)"
+            case .cppMediumEnQ5: return "whisper.cpp: Medium Q5 (English) — accurate, smaller (539 MB)"
+            case .cppLargeV2: return "whisper.cpp: Large v2 — very accurate, slow (3.1 GB)"
+            case .cppLargeV2Q5: return "whisper.cpp: Large v2 Q5 — very accurate (1.1 GB)"
+            case .cppLargeV3: return "whisper.cpp: Large v3 — most accurate, slow (3.1 GB)"
+            case .cppLargeV3Q5: return "whisper.cpp: Large v3 Q5 — most accurate (1.1 GB)"
+            case .cppLargeV3Turbo: return "whisper.cpp: Large v3 Turbo — accurate + faster (1.6 GB)"
+            case .cppLargeV3TurboQ5: return "whisper.cpp: Large v3 Turbo Q5 — accurate, fast (574 MB)"
+            case .cppLargeV3TurboQ8: return "whisper.cpp: Large v3 Turbo Q8 — accurate, fast (874 MB)"
             }
         }
     }
@@ -145,9 +196,18 @@ final class Preferences {
         let defaults = UserDefaults.standard
         self.defaults = defaults
 
-        // First-ever launch defaults to Whisper Small; a stored choice (incl. a
-        // now-removed model) is honored, falling back to Small if unreadable.
-        model = ModelChoice(rawValue: defaults.string(forKey: Keys.model) ?? "") ?? .small
+        // New default: whisper.cpp Large v3 Turbo (F16) — fast on Metal and the most
+        // accurate turbo variant. A one-time migration moves EVERY existing user to
+        // it on this update too (not just new installs), gated by a flag so it fires
+        // exactly once; afterwards the user's own model choice is honored. New
+        // installs (no stored value) also start here.
+        if defaults.bool(forKey: Keys.migratedTurboCpp) {
+            model = ModelChoice(rawValue: defaults.string(forKey: Keys.model) ?? "") ?? .cppLargeV3Turbo
+        } else {
+            model = .cppLargeV3Turbo
+            defaults.set(ModelChoice.cppLargeV3Turbo.rawValue, forKey: Keys.model)
+            defaults.set(true, forKey: Keys.migratedTurboCpp)
+        }
 
         language = Language(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? .auto
         inputDeviceUID = defaults.string(forKey: Keys.inputDeviceUID)
@@ -191,5 +251,7 @@ final class Preferences {
         static let onboarded = "hasCompletedOnboarding"
         static let accentTheme = "accentTheme"
         static let migratedTurboV2 = "migratedToTurboV2"
+        /// One-time gate: force everyone to the new whisper.cpp Turbo default once.
+        static let migratedTurboCpp = "migratedToTurboCpp"
     }
 }

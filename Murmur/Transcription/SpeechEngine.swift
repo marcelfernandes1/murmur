@@ -3,6 +3,10 @@ import Foundation
 /// Model load lifecycle, surfaced so the UI never looks frozen.
 enum EngineLoadState: Sendable, Equatable {
     case preparing
+    /// Fraction (0…1) of a model download completed. Emitted by engines that
+    /// fetch large weights on demand (whisper.cpp's ggml files run 75 MB–3 GB),
+    /// so a multi-minute download shows progress instead of a frozen "Preparing".
+    case downloading(Double)
     case ready
     case failed(String)
 }

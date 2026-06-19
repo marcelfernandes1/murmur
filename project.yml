@@ -9,8 +9,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.4.14"
-    CURRENT_PROJECT_VERSION: "48"
+    MARKETING_VERSION: "0.4.17"
+    CURRENT_PROJECT_VERSION: "51"
     PRODUCT_BUNDLE_IDENTIFIER: com.murmur.app
     ENABLE_HARDENED_RUNTIME: "YES"
     # Sign with a stable Development identity (not ad-hoc) so macOS keeps the
@@ -41,6 +41,11 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: "2.6.0"
+  # whisper.cpp's official prebuilt XCFramework (Metal + Core ML), wrapped by a
+  # tiny local package so models run GPU-accelerated on Apple Silicon. See
+  # Vendor/WhisperCpp/Package.swift for why the binary release (not source).
+  WhisperCpp:
+    path: Vendor/WhisperCpp
 
 targets:
   Murmur:
@@ -61,6 +66,8 @@ targets:
       - package: FluidAudio
       - package: LLM
       - package: Sparkle
+      - package: WhisperCpp
+        product: WhisperCppKit
 
 schemes:
   Murmur:
