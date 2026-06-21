@@ -76,6 +76,9 @@ struct DictationNotchView: View {
 // MARK: - Listening
 
 /// The mic + live waveform, or the streaming partial transcript with a live dot.
+/// While hands-free locked, the clickable controls live in a separate floating
+/// bubble below the notch (`HandsFreeControlBar`) — the notch panel itself can't
+/// host buttons without stealing focus from the field being pasted into.
 private struct ListeningRow: View {
     let model: NotchViewModel
     let accent: Color

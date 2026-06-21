@@ -149,6 +149,17 @@ final class Preferences {
         didSet { defaults.set(fnTriggerEnabled, forKey: Keys.fnTrigger) }
     }
 
+    /// Hands-free lock: press Space while holding the trigger to keep recording
+    /// after releasing it; press the trigger again to insert.
+    var handsFreeLock: Bool {
+        didSet { defaults.set(handsFreeLock, forKey: Keys.handsFreeLock) }
+    }
+
+    /// Play soft audio cues when a recording starts, stops, and locks.
+    var soundEffects: Bool {
+        didSet { defaults.set(soundEffects, forKey: Keys.soundEffects) }
+    }
+
     /// Transcribe live while recording (shows a preview in the notch).
     var streaming: Bool {
         didSet { defaults.set(streaming, forKey: Keys.streaming) }
@@ -214,6 +225,13 @@ final class Preferences {
         fnTriggerEnabled = defaults.object(forKey: Keys.fnTrigger) == nil
             ? true
             : defaults.bool(forKey: Keys.fnTrigger)
+        // Hands-free lock and sound effects default ON (object == nil ⇒ unset).
+        handsFreeLock = defaults.object(forKey: Keys.handsFreeLock) == nil
+            ? true
+            : defaults.bool(forKey: Keys.handsFreeLock)
+        soundEffects = defaults.object(forKey: Keys.soundEffects) == nil
+            ? true
+            : defaults.bool(forKey: Keys.soundEffects)
         // First-launch defaults: streaming, filler removal, and smart cleanup all
         // OFF (`bool(forKey:)` is false when unset). Each persists once toggled.
         streaming = defaults.bool(forKey: Keys.streaming)
@@ -243,6 +261,8 @@ final class Preferences {
         static let language = "language"
         static let inputDeviceUID = "inputDeviceUID"
         static let fnTrigger = "fnTriggerEnabled"
+        static let handsFreeLock = "handsFreeLock"
+        static let soundEffects = "soundEffects"
         static let streaming = "streamingEnabled"
         static let removeFillers = "removeFillers"
         static let smartCleanup = "smartCleanup"
