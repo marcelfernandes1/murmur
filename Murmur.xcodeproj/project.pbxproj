@@ -18,6 +18,7 @@
 		1BF2F774E3AA092F849AEBE7 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A710610BF3B66223924FEA20 /* HistoryView.swift */; };
 		1ECEB6CEC3C683A38B8CFCB0 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6770C1B15A28CC35B18049A0 /* SettingsView.swift */; };
 		24BABAC81816935A2E22BCA8 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53775387F79D53139E81F44D /* Preferences.swift */; };
+		2DEB0F7856BD9F72E420E4D6 /* HandsFreeControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27920B99968B5506EC2EC1D2 /* HandsFreeControlBar.swift */; };
 		2F70B1826D2A86D4933B4314 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5702C2D6B3C04568EEF3BA6 /* AppState.swift */; };
 		35471ED6D4C5CA39C62FAB66 /* HistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AC3688EC42A83EA4F8CAC8 /* HistoryStore.swift */; };
 		37E87ABBA43B720022654C8B /* DictationNotchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEFF59EA307BC18A18805CBC /* DictationNotchView.swift */; };
@@ -49,6 +50,7 @@
 		A55E56EDBAB318C744803114 /* AudioDevices.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8130742D65913C223D42C07 /* AudioDevices.swift */; };
 		A66A1A4ADD2A8B6C9C8DEDCB /* CleanupGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26BE6EB28C43A4AA45C0F9F5 /* CleanupGuard.swift */; };
 		A68563F0E8D48DB4D9E81CFF /* VocabularyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AAEFEFDCADC489D93AAA1E1 /* VocabularyStore.swift */; };
+		ACB0C77AF68C17709280F5EE /* FeedbackSounds.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B633787355FF26F14CEFA56 /* FeedbackSounds.swift */; };
 		B0445A07A5B43E52140C26A0 /* CleanupPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53B0F21ADEE03003F1D375A4 /* CleanupPrompt.swift */; };
 		B42A301AACB6CE1CC623E0E6 /* Metrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08A735CC6A3A781D079F760F /* Metrics.swift */; };
 		B4D8741D71D242ABC5223987 /* MurmurApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56634B3B5D3BF1AE378F4D4C /* MurmurApp.swift */; };
@@ -57,6 +59,7 @@
 		BA558E1DCE67D0AB883AD827 /* SectionHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55AF8B9EF8CCCF93067DE18A /* SectionHeader.swift */; };
 		BB26F1F85BF7C18DDD03ACD0 /* Transcript.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6E99D47116B93F220C349AA /* Transcript.swift */; };
 		BD38581EDE059A8BAEDFC995 /* GlassCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5B9D695B2A8BFAAFC51684A /* GlassCard.swift */; };
+		BEF953F3104975EC0767F26E /* SpaceLockMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B069DE695696AAD1988C0D63 /* SpaceLockMonitor.swift */; };
 		C99598F93B4D939549DCD041 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 163E144FC17541C89AA23977 /* OnboardingView.swift */; };
 		CC64CED9ADF7C91272C335C2 /* TextInserter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04230C96C421CD64A6E2A53F /* TextInserter.swift */; };
 		CCA6160297EC5A1677B8106D /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 4755A9F4C696CFA48D7D64A5 /* KeyboardShortcuts */; };
@@ -78,6 +81,7 @@
 		16E26D887EA4A65459879FE3 /* OnboardingWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingWindowController.swift; sourceTree = "<group>"; };
 		1ED8048E32D48DEA392FFA05 /* ParakeetService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetService.swift; sourceTree = "<group>"; };
 		26BE6EB28C43A4AA45C0F9F5 /* CleanupGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupGuard.swift; sourceTree = "<group>"; };
+		27920B99968B5506EC2EC1D2 /* HandsFreeControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandsFreeControlBar.swift; sourceTree = "<group>"; };
 		2AAEFEFDCADC489D93AAA1E1 /* VocabularyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VocabularyStore.swift; sourceTree = "<group>"; };
 		31C67F329B092E2081510812 /* CleanupComparisonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupComparisonView.swift; sourceTree = "<group>"; };
 		37BBDF87CA94D8CE1EE0C411 /* Murmur.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Murmur.entitlements; sourceTree = "<group>"; };
@@ -95,6 +99,7 @@
 		62DC13FB2394C0085B94D8D9 /* LLMCleaner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMCleaner.swift; sourceTree = "<group>"; };
 		6770C1B15A28CC35B18049A0 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		69102DFB3C77FB36C38F5338 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
+		6B633787355FF26F14CEFA56 /* FeedbackSounds.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackSounds.swift; sourceTree = "<group>"; };
 		7701A0233E768F91300BB26F /* SingleKeyRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleKeyRecorder.swift; sourceTree = "<group>"; };
 		7A7451C1A732FF606D034E48 /* NotchController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchController.swift; sourceTree = "<group>"; };
 		8A870C06FF566F80022B9E7F /* TextCleaner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextCleaner.swift; sourceTree = "<group>"; };
@@ -105,6 +110,7 @@
 		A5E949E85050BFBCC97EFD5D /* Motion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Motion.swift; sourceTree = "<group>"; };
 		A710610BF3B66223924FEA20 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 		ACD6717653C34A491F548779 /* CorrectionDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectionDetector.swift; sourceTree = "<group>"; };
+		B069DE695696AAD1988C0D63 /* SpaceLockMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceLockMonitor.swift; sourceTree = "<group>"; };
 		BB809AC7411ABED34FBD4271 /* WhisperCpp */ = {isa = PBXFileReference; lastKnownFileType = folder; name = WhisperCpp; path = Vendor/WhisperCpp; sourceTree = SOURCE_ROOT; };
 		C28F23AE8BAEA25C1EE64686 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
 		C49333C643A57D1DCCF4A732 /* UpdaterController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterController.swift; sourceTree = "<group>"; };
@@ -159,6 +165,7 @@
 			isa = PBXGroup;
 			children = (
 				FEFF59EA307BC18A18805CBC /* DictationNotchView.swift */,
+				27920B99968B5506EC2EC1D2 /* HandsFreeControlBar.swift */,
 				7A7451C1A732FF606D034E48 /* NotchController.swift */,
 				A54520474BD73D1D2080A4C8 /* NotchViewModel.swift */,
 				3EE3570B5B635B2B770C752E /* WaveformView.swift */,
@@ -172,6 +179,7 @@
 				418E013920EE917911B19B24 /* AccessibilityManager.swift */,
 				98919B92B5C554F72BB47F74 /* FieldEditWatcher.swift */,
 				69102DFB3C77FB36C38F5338 /* HotkeyManager.swift */,
+				B069DE695696AAD1988C0D63 /* SpaceLockMonitor.swift */,
 				04230C96C421CD64A6E2A53F /* TextInserter.swift */,
 			);
 			path = Input;
@@ -203,6 +211,14 @@
 				0183A1D9406ED6C24CA638ED /* WhisperService.swift */,
 			);
 			path = Transcription;
+			sourceTree = "<group>";
+		};
+		53452B2482207242AAE256EC /* Feedback */ = {
+			isa = PBXGroup;
+			children = (
+				6B633787355FF26F14CEFA56 /* FeedbackSounds.swift */,
+			);
+			path = Feedback;
 			sourceTree = "<group>";
 		};
 		55AFDC8326A0474CEB29A9C9 = {
@@ -276,6 +292,7 @@
 				BBF1B9F74312639FCD3F46F1 /* App */,
 				CCEEBB876AB733E78B1B399C /* Audio */,
 				A138D2BECFF0E64BECC9B2DD /* DesignSystem */,
+				53452B2482207242AAE256EC /* Feedback */,
 				B2ED274F687B87D3AC9EC907 /* History */,
 				11C6C97ADB3694212B1D76A2 /* Input */,
 				0B54D9C4C1943254B0F86E95 /* Notch */,
@@ -426,9 +443,11 @@
 				D7743C9609DE2FCF1F6890BF /* DictationController.swift in Sources */,
 				37E87ABBA43B720022654C8B /* DictationNotchView.swift in Sources */,
 				037307826D0FC24F615F9F46 /* EmptyStateView.swift in Sources */,
+				ACB0C77AF68C17709280F5EE /* FeedbackSounds.swift in Sources */,
 				8B18FAEB78C4800902FE60CD /* FieldEditWatcher.swift in Sources */,
 				BD38581EDE059A8BAEDFC995 /* GlassCard.swift in Sources */,
 				5008518A229F024E8F45A8FF /* GlassWindow.swift in Sources */,
+				2DEB0F7856BD9F72E420E4D6 /* HandsFreeControlBar.swift in Sources */,
 				35471ED6D4C5CA39C62FAB66 /* HistoryStore.swift in Sources */,
 				1BF2F774E3AA092F849AEBE7 /* HistoryView.swift in Sources */,
 				6B69B773207E03058DADE024 /* HotkeyManager.swift in Sources */,
@@ -450,6 +469,7 @@
 				1ECEB6CEC3C683A38B8CFCB0 /* SettingsView.swift in Sources */,
 				B796BA88287892985EBDF9C4 /* SettingsWindowController.swift in Sources */,
 				50C8AAFBEEB582ED8650490A /* SingleKeyRecorder.swift in Sources */,
+				BEF953F3104975EC0767F26E /* SpaceLockMonitor.swift in Sources */,
 				91628A18DDBD4C1519F42420 /* SpeechEngine.swift in Sources */,
 				9553343DB2C032FFA88D3326 /* StatusBadge.swift in Sources */,
 				384BCD59A131FB3CA01A0204 /* TextCleaner.swift in Sources */,
@@ -537,7 +557,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 51;
+				CURRENT_PROJECT_VERSION = 58;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -552,7 +572,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.4.17;
+				MARKETING_VERSION = 0.4.24;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.murmur.app;
@@ -602,7 +622,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 51;
+				CURRENT_PROJECT_VERSION = 58;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -623,7 +643,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.4.17;
+				MARKETING_VERSION = 0.4.24;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

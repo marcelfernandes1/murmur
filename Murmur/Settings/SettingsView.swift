@@ -169,6 +169,15 @@ struct SettingsView: View {
             Text("Click a box and press a key or combo. Combo boxes need a modifier (⌘/⌥/⌃); use “Single key” to bind one bare key. Hold a trigger to dictate; release to transcribe.")
         }
 
+        Section {
+            Toggle("Hands-free lock", isOn: prefs.handsFreeLock)
+            Toggle("Sound effects", isOn: prefs.soundEffects)
+        } header: {
+            Text("Hands-free & feedback")
+        } footer: {
+            Text("With hands-free lock on, press Space while holding your trigger to keep recording without holding it — then tap the trigger again to insert. Sound effects play soft cues when recording starts, stops, and locks.")
+        }
+
         Section("Language") {
             Picker("Spoken language", selection: prefs.language) {
                 ForEach(Preferences.Language.allCases) { language in

@@ -20,6 +20,9 @@ final class DictationController {
     private let notch = NotchController()
     private let history: HistoryStore
     private let editWatcher = FieldEditWatcher()
+    private let sounds = FeedbackSounds()
+    private let spaceLock = SpaceLockMonitor()
+    private let controlBar = HandsFreeControlBar()
     private var cleaner: any TextCleaner
 
     /// Instruments delivery stages so latency is visible in Instruments / `log
@@ -31,6 +34,10 @@ final class DictationController {
     private static let audioLog = Logger(subsystem: "com.murmur.app", category: "audio")
 
     private var isRecording = false
+    /// Hands-free: the recording was "locked" (Space while holding the trigger) so
+    /// it keeps capturing after the trigger is released, until the next trigger
+    /// press commits it.
+    private var isLocked = false
     private var awaitingResult = false
     private var didWarmOthers = false
     private var streamTask: Task<Void, Never>?
@@ -49,7 +56,7 @@ final class DictationController {
     private static let minIntentionalHold: Duration = .milliseconds(400)
 
     /// What a just-ended recording's buffer warrants. Pure decision, kept out of
-    /// `endRecording` so it can be exercised by `runCaptureSelfTest`.
+    /// `commitRecording` so it can be exercised by `runCaptureSelfTest`.
     enum CaptureOutcome: Equatable {
         case accidentalTap   // too short to be real + the trigger was barely held
         case noAudio         // held a real beat but the engine delivered ~nothing
@@ -99,8 +106,15 @@ final class DictationController {
     }
 
     func bootstrap() {
-        hotkeys.onPress = { [weak self] in self?.beginRecording() }
-        hotkeys.onRelease = { [weak self] in self?.endRecording() }
+        hotkeys.onPress = { [weak self] in self?.handleTriggerDown() }
+        hotkeys.onRelease = { [weak self] in self?.handleTriggerUp() }
+        spaceLock.onLock = { [weak self] in self?.lockRecording() }
+        // Esc cancels the recording (same as Trash), without transcribing.
+        spaceLock.onCancel = { [weak self] in self?.discardRecording() }
+        // The hands-free control bubble's buttons: ✓ commits (like pressing the
+        // trigger again), 🗑 discards the audio without transcribing.
+        controlBar.onDone = { [weak self] in self?.commitRecording() }
+        controlBar.onCancel = { [weak self] in self?.discardRecording() }
         hotkeys.start(fnEnabled: preferences.fnTriggerEnabled)
         appState.shortcutHint = "Trigger: \(hotkeys.triggersDescription)"
 
@@ -127,6 +141,12 @@ final class DictationController {
         }
         if ProcessInfo.processInfo.environment["MURMUR_TEST_CAPTURE"] != nil {
             Self.runCaptureSelfTest()
+        }
+        // Visual preview of the notch + hands-free bubble together (no recording),
+        // for screenshotting the layout: `MURMUR_PREVIEW_CONTROLBAR=1 open Murmur.app`.
+        if ProcessInfo.processInfo.environment["MURMUR_PREVIEW_CONTROLBAR"] != nil {
+            notch.showListening()
+            controlBar.show()
         }
 
         attachStateHandler(to: engine)
@@ -267,13 +287,60 @@ final class DictationController {
 
     // MARK: - Recording
 
+    /// Trigger pressed. Starts a recording, or — when already hands-free locked —
+    /// commits the in-flight one (the "press again to insert" half of the gesture).
+    private func handleTriggerDown() {
+        if isRecording {
+            if isLocked { commitRecording() }
+            return
+        }
+        beginRecording()
+    }
+
+    /// Trigger released. Commits a normal push-to-talk recording; ignored while
+    /// hands-free locked, so releasing the trigger keeps the recording running.
+    private func handleTriggerUp() {
+        guard isRecording, !isLocked else { return }
+        commitRecording()
+    }
+
+    /// Lock the live recording into hands-free mode (Space pressed while holding the
+    /// trigger). The trigger can now be released without ending capture.
+    private func lockRecording() {
+        guard isRecording, !isLocked else { return }
+        isLocked = true
+        if preferences.soundEffects { sounds.play(.lock) }
+        controlBar.show()
+    }
+
+    /// Discard the in-flight recording without transcribing (the 🗑 button). Drops
+    /// the captured audio and resets to idle.
+    private func discardRecording() {
+        guard isRecording else { return }
+        isRecording = false
+        isLocked = false
+        spaceLock.stop()
+        controlBar.hide()
+        streamTask?.cancel()
+        streamTask = nil
+        _ = recorder.stop(reason: .hotkeyCancelled)
+        recordingStartedAt = nil
+        appState.status = .idle
+        notch.dismiss()
+    }
+
     private func beginRecording() {
         guard !isRecording else { return }
         isRecording = true
+        isLocked = false
         recordingStartedAt = recordingClock.now
         errorClearTask?.cancel()
         // A new dictation supersedes watching the previous field for edits.
         editWatcher.cancel()
+        // Immediate audio feedback on press, plus arm the Space-to-lock tap for the
+        // hands-free gesture (both honor their preference toggles).
+        if preferences.soundEffects { sounds.play(.start) }
+        if preferences.handsFreeLock { spaceLock.start() }
         // The notch live preview only makes sense on a fast, non-autoregressive
         // engine. With Whisper, repeatedly transcribing the growing buffer is
         // O(n²) and starves the final transcription — so we skip it there and just
@@ -284,6 +351,7 @@ final class DictationController {
                 try await recorder.start()
                 guard isRecording else {
                     _ = recorder.stop(reason: .hotkeyCancelled)
+                    spaceLock.stop()
                     notch.dismiss()
                     return
                 }
@@ -294,6 +362,7 @@ final class DictationController {
                 }
             } catch {
                 isRecording = false
+                spaceLock.stop()
                 flagError(.error(error.localizedDescription), notch: error.localizedDescription)
             }
         }
@@ -322,9 +391,14 @@ final class DictationController {
         }
     }
 
-    private func endRecording() {
+    /// Stop capturing and run the transcribe → deliver pipeline. Fired by releasing
+    /// the trigger (push-to-talk) or by pressing it again after a hands-free lock.
+    private func commitRecording() {
         guard isRecording else { return }
         isRecording = false
+        isLocked = false
+        spaceLock.stop()
+        controlBar.hide()
         streamTask?.cancel()
         streamTask = nil
 
@@ -333,7 +407,7 @@ final class DictationController {
         recordingStartedAt = nil
         let duration = Double(samples.count) / 16_000.0
         let peak = recorder.peakAmplitude
-        Self.audioLog.log("endRecording: samples=\(samples.count, privacy: .public) duration=\(duration, privacy: .public)s peak=\(peak, privacy: .public)")
+        Self.audioLog.log("commitRecording: samples=\(samples.count, privacy: .public) duration=\(duration, privacy: .public)s peak=\(peak, privacy: .public)")
 
         // Decide what to do with the buffer (pure + unit-tested — see runCaptureSelfTest).
         switch Self.captureOutcome(sampleCount: samples.count, held: held, peak: peak) {
@@ -358,6 +432,9 @@ final class DictationController {
         case .transcribe:
             break
         }
+
+        // A real recording is ending — the "let go / press to insert" cue.
+        if preferences.soundEffects { sounds.play(.stop) }
 
         awaitingResult = true
         appState.status = .transcribing
