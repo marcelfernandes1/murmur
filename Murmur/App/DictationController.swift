@@ -43,6 +43,23 @@ final class DictationController {
     private var streamTask: Task<Void, Never>?
     private var undoClearTask: Task<Void, Never>?
     private var errorClearTask: Task<Void, Never>?
+    /// The begin-recording Task (audio-unit start). Tracked so a quick release that
+    /// beats a slow (e.g. Bluetooth) `recorder.start()` can defer the commit until
+    /// capture is actually live, instead of stopping an empty buffer.
+    private var startTask: Task<Void, Never>?
+    /// The transcribe→deliver Task, tracked so a new (or cancelled) dictation can
+    /// abandon an in-flight one rather than letting a stale result paste itself.
+    private var transcribeTask: Task<Void, Never>?
+    /// True once `recorder.start()` has actually brought capture up.
+    private var captureLive = false
+    /// Trigger released before capture went live — commit as soon as it does.
+    private var commitPending = false
+    /// Engine bound to the in-flight dictation, captured at begin so switching models
+    /// mid-recording can't make the commit transcribe on a not-yet-loaded engine.
+    private var dictationEngine: SpeechEngine?
+    /// Monotonic per-dictation tag so a late/stale transcribe result can't clobber a
+    /// newer dictation's UI state.
+    private var dictationGeneration = 0
 
     /// Wall-clock trigger-down instant, used to tell an accidental tap (released
     /// almost immediately) from a real hold that happened to capture nothing.
@@ -167,6 +184,9 @@ final class DictationController {
     }
 
     func applyModel() {
+        // An in-flight dictation keeps the engine it captured at begin (see
+        // `dictationEngine`), so swapping here can't redirect its commit to a not-yet-
+        // loaded model — the new choice simply takes effect from the next dictation.
         appState.modelPhase = .preparing
         let newEngine = Self.makeEngine(for: preferences.model)
         engine = newEngine
@@ -319,12 +339,16 @@ final class DictationController {
         guard isRecording else { return }
         isRecording = false
         isLocked = false
+        captureLive = false
+        commitPending = false
         spaceLock.stop()
         controlBar.hide()
         streamTask?.cancel()
         streamTask = nil
+        transcribeTask?.cancel()
         _ = recorder.stop(reason: .hotkeyCancelled)
         recordingStartedAt = nil
+        awaitingResult = false
         appState.status = .idle
         notch.dismiss()
     }
@@ -333,20 +357,32 @@ final class DictationController {
         guard !isRecording else { return }
         isRecording = true
         isLocked = false
+        captureLive = false
+        commitPending = false
         recordingStartedAt = recordingClock.now
         errorClearTask?.cancel()
+        // Starting a new dictation abandons any still-in-flight transcription from a
+        // previous one (its result must not paste into this new context) and clears a
+        // stuck "awaiting" state, so a wedged prior dictation can't freeze the UI.
+        transcribeTask?.cancel()
+        awaitingResult = false
+        // Bind the engine for this whole dictation up front, so switching the model in
+        // Settings mid-recording can't make the commit transcribe on an unloaded one.
+        dictationEngine = engine
         // A new dictation supersedes watching the previous field for edits.
         editWatcher.cancel()
         // Immediate audio feedback on press, plus arm the Space-to-lock tap for the
         // hands-free gesture (both honor their preference toggles).
         if preferences.soundEffects { sounds.play(.start) }
-        if preferences.handsFreeLock { spaceLock.start() }
+        if preferences.handsFreeLock, !spaceLock.start() {
+            Self.audioLog.error("Hands-free lock unavailable — Space-lock tap couldn't be created (Accessibility not granted?)")
+        }
         // The notch live preview only makes sense on a fast, non-autoregressive
         // engine. With Whisper, repeatedly transcribing the growing buffer is
         // O(n²) and starves the final transcription — so we skip it there and just
         // transcribe once on release.
         let streamingCapable = preferences.model.engine == .parakeet
-        Task {
+        startTask = Task {
             do {
                 try await recorder.start()
                 guard isRecording else {
@@ -355,14 +391,25 @@ final class DictationController {
                     notch.dismiss()
                     return
                 }
+                captureLive = true
                 appState.status = .listening
                 notch.showListening()
                 if preferences.streaming && streamingCapable {
                     startStreamingLoop()
                 }
+                // If the trigger was released during a slow start, the commit was
+                // deferred (see commitRecording) — run it now that capture is live.
+                if commitPending {
+                    commitPending = false
+                    commitRecording()
+                }
             } catch {
                 isRecording = false
+                isLocked = false
+                captureLive = false
+                commitPending = false
                 spaceLock.stop()
+                controlBar.hide()
                 flagError(.error(error.localizedDescription), notch: error.localizedDescription)
             }
         }
@@ -373,6 +420,7 @@ final class DictationController {
     private func startStreamingLoop() {
         let language = preferences.language.code
         let vocab = biasVocabulary()
+        let engine = dictationEngine ?? self.engine
         streamTask?.cancel()
         streamTask = Task {
             while isRecording {
@@ -395,8 +443,17 @@ final class DictationController {
     /// the trigger (push-to-talk) or by pressing it again after a hands-free lock.
     private func commitRecording() {
         guard isRecording else { return }
+        // If capture hasn't actually gone live yet (slow Bluetooth start), defer the
+        // commit: the start Task re-invokes commitRecording the moment it's live, so
+        // we never stop and transcribe an empty buffer (the lost-first-capture bug).
+        if !captureLive {
+            commitPending = true
+            return
+        }
         isRecording = false
         isLocked = false
+        captureLive = false
+        commitPending = false
         spaceLock.stop()
         controlBar.hide()
         streamTask?.cancel()
@@ -444,7 +501,12 @@ final class DictationController {
             notch.showPreparing("Preparing model… (first run can take a couple minutes)")
         }
 
-        Task {
+        // Tag this dictation and bind its engine so a late result can't clobber a
+        // newer dictation, and a mid-recording model switch can't redirect the commit.
+        dictationGeneration &+= 1
+        let generation = dictationGeneration
+        let engine = dictationEngine ?? self.engine
+        transcribeTask = Task {
             let signposter = Self.signposter
             do {
                 let transcribeState = signposter.beginInterval("transcribe")
@@ -475,6 +537,10 @@ final class DictationController {
                 } else if preferences.removeFillers {
                     text = TranscriptCleaner.removeFillers(text)
                 }
+                // Drop a superseded or cancelled result: if a newer dictation started
+                // (or this one was discarded) while we were transcribing/polishing, it
+                // must not paste into the new field or overwrite fresher UI state.
+                guard !Task.isCancelled, generation == dictationGeneration else { return }
                 // Apply previously-learned corrections last, so they reliably win
                 // over whatever the recognizer/cleanup produced. Pure, bounded,
                 // in-memory — it cannot block delivery (see CorrectionStore).
@@ -483,10 +549,13 @@ final class DictationController {
                 signposter.endInterval("corrections", correctState)
                 deliver(text, original: rawTranscript)
                 appState.status = .idle
+                awaitingResult = false
             } catch {
+                // Only the current dictation owns the shared UI state.
+                guard generation == dictationGeneration else { return }
                 flagError(.error(error.localizedDescription), notch: error.localizedDescription)
+                awaitingResult = false
             }
-            awaitingResult = false
         }
     }
 

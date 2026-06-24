@@ -58,13 +58,17 @@ actor WhisperService: SpeechEngine {
             .joined()
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // TEMP DIAGNOSTIC — confirm long audio isn't being truncated.
+        // Diagnostic (DEBUG only): confirm long audio isn't being truncated. Never
+        // write to a world-readable file in a shipping build — even these counts
+        // leak that/how much the user dictated.
+        #if DEBUG
         let line = "WHISPER in=\(samples.count) (\(samples.count / 16_000)s) timestamps=\(longAudio ? "on" : "off") segments=\(results.count) outChars=\(transcript.count)\n"
         let url = URL(fileURLWithPath: "/tmp/murmur_audio.log")
         if let data = line.data(using: .utf8) {
             if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(data); try? h.close() }
             else { try? data.write(to: url) }
         }
+        #endif
 
         return transcript
     }

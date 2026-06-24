@@ -41,16 +41,35 @@ final class ModelDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Se
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
-        guard let destination else { return }
+        // Resume even on the unexpected nil-destination path, so the awaiting call
+        // can never hang forever waiting on a continuation that's never fulfilled.
+        guard let destination else {
+            continuation?.resume(throwing: DownloadError.noDestination)
+            continuation = nil
+            return
+        }
         if let http = downloadTask.response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             continuation?.resume(throwing: DownloadError.badStatus(http.statusCode))
             continuation = nil
             return
         }
         do {
-            // Must move synchronously here — `location` is deleted once this returns.
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: location, to: destination)
+            // Detect a truncated transfer (server closed early without an error)
+            // before the file is trusted/loaded.
+            let expected = downloadTask.response?.expectedContentLength ?? -1
+            if expected > 0,
+               let actual = (try? FileManager.default.attributesOfItem(atPath: location.path))?[.size] as? Int,
+               Int64(actual) != expected {
+                throw DownloadError.truncated(expected: expected, got: Int64(actual))
+            }
+            // Place atomically (replace if a file already exists, else move) instead
+            // of remove-then-move, which has a window where the file is missing. Must
+            // run synchronously — `location` is deleted once this returns.
+            if FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(destination, withItemAt: location)
+            } else {
+                try FileManager.default.moveItem(at: location, to: destination)
+            }
             continuation?.resume(returning: destination)
         } catch {
             continuation?.resume(throwing: error)
@@ -66,5 +85,5 @@ final class ModelDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Se
         }
     }
 
-    enum DownloadError: Error { case badStatus(Int) }
+    enum DownloadError: Error { case badStatus(Int), truncated(expected: Int64, got: Int64), noDestination }
 }

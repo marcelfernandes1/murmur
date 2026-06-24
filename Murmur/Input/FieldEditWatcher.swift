@@ -90,16 +90,27 @@ final class FieldEditWatcher {
         }
     }
 
-    // MARK: - TEMP diagnostics (remove once edit-learning is confirmed working)
+    // MARK: - Diagnostics (DEBUG-only)
+    // These messages include the inserted transcript and the focused field's
+    // contents, so they must NEVER be written to disk in a shipping build (the app
+    // is unsandboxed; /tmp is world-readable). Compiled out entirely in release.
+    #if DEBUG
     private static let diagURL = URL(fileURLWithPath: "/tmp/murmur_learn.log")
-    static func diagReset() { try? Data().write(to: diagURL) }
+    #endif
+    static func diagReset() {
+        #if DEBUG
+        try? Data().write(to: diagURL)
+        #endif
+    }
     static func diag(_ message: String) {
+        #if DEBUG
         guard let data = ("LEARN " + message + "\n").data(using: .utf8) else { return }
         if let handle = try? FileHandle(forWritingTo: diagURL) {
             handle.seekToEndOfFile(); handle.write(data); try? handle.close()
         } else {
             try? data.write(to: diagURL)
         }
+        #endif
     }
 
     /// Stop watching (called when a new dictation starts or a correction lands).

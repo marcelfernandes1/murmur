@@ -78,14 +78,28 @@ actor WhisperCppService: SpeechEngine {
             .appendingPathComponent("Murmur/Models", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appendingPathComponent(fileName)
-        if FileManager.default.fileExists(atPath: dest.path) { return dest }
+        if FileManager.default.fileExists(atPath: dest.path) {
+            // Trust the cache only if its size still matches the pin (instant check);
+            // a truncated/corrupt cache is removed and re-downloaded.
+            if ModelManifest.sizeMatches(fileName: fileName, at: dest) { return dest }
+            try? FileManager.default.removeItem(at: dest)
+        }
 
         guard let remote = URL(string: "https://huggingface.co/\(repo)/resolve/main/\(fileName)?download=true") else {
             throw WhisperCppError.modelLoadFailed
         }
         notify?(.downloading(0))
         let downloader = ModelDownloader { fraction in notify?(.downloading(fraction)) }
-        return try await downloader.download(from: remote, to: dest)
+        let url = try await downloader.download(from: remote, to: dest)
+        // Verify SHA-256 against the build-pinned hash before the C parser ever sees
+        // the file. On mismatch, delete it so a poisoned/corrupt file can't persist.
+        do {
+            try ModelManifest.verify(fileName: fileName, at: url)
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
+        return url
     }
 
     enum WhisperCppError: Error { case modelLoadFailed, inferenceFailed }

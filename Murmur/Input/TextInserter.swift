@@ -8,18 +8,39 @@ enum TextInserter {
     /// user's existing clipboard contents.
     static func paste(_ text: String) {
         let pasteboard = NSPasteboard.general
-        let previous = pasteboard.string(forType: .string)
+        // Snapshot the ENTIRE clipboard (every item and type), not just plain text.
+        // The old code captured only `.string`, so a copied image/file/rich-text was
+        // destroyed by the round-trip, and a non-string clipboard left the transcript
+        // stranded on the pasteboard (`previous == nil` skipped the restore).
+        let saved = savedItems(from: pasteboard)
 
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+        let ourChangeCount = pasteboard.changeCount
         postCommandV()
 
-        // Restore the prior clipboard once the paste has landed.
-        if let previous {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                pasteboard.clearContents()
-                pasteboard.setString(previous, forType: .string)
+        // Restore the user's clipboard after the paste lands. Two guards:
+        //  • Only restore if the pasteboard still holds OUR transcript — if the user
+        //    copied something else in the window, leave their new content alone.
+        //  • Always clear our transcript even when there was nothing to restore, so
+        //    the dictation is never left sitting on the clipboard.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            guard pasteboard.changeCount == ourChangeCount else { return }
+            pasteboard.clearContents()
+            if !saved.isEmpty { pasteboard.writeObjects(saved) }
+        }
+    }
+
+    /// Deep-copy every item/type currently on the pasteboard. `NSPasteboardItem`s
+    /// are consumed once written, so each is duplicated to survive the restore.
+    private static func savedItems(from pasteboard: NSPasteboard) -> [NSPasteboardItem] {
+        guard let items = pasteboard.pasteboardItems else { return [] }
+        return items.map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) { copy.setData(data, forType: type) }
             }
+            return copy
         }
     }
 
