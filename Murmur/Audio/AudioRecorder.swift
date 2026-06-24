@@ -482,11 +482,15 @@ final class AudioRecorder: @unchecked Sendable {
 
     private func diag(_ message: String) {
         Self.logger.log("[AudioRecorder] \(message, privacy: .public)")
+        #if DEBUG
         Self.fileLog(message)
+        #endif
     }
 
     /// os.Logger is unreliable for this build (entries don't surface in
     /// `log show`), so mirror every diagnostic to a flat file we can tail.
+    /// DEBUG-only: a shipping build must not accumulate an unbounded /tmp log.
+    #if DEBUG
     private static let fileLogURL = URL(fileURLWithPath: "/tmp/murmur_recorder.log")
     private static let fileLogQueue = DispatchQueue(label: "com.murmur.app.audio.filelog")
     private static func fileLog(_ message: String) {
@@ -500,4 +504,5 @@ final class AudioRecorder: @unchecked Sendable {
             }
         }
     }
+    #endif
 }

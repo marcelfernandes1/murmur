@@ -31,12 +31,17 @@ actor LLMCleaner: TextCleaner {
         guard !trimmed.isEmpty else { return text }
         guard let llm = try? await load() else { return text }
 
+        // Defense-in-depth: strip ChatML control tokens from the transcript before
+        // interpolating it into the template. Whisper never emits these from speech,
+        // but a future input path (pasted text, a different ASR) mustn't be able to
+        // forge a system/assistant turn and hijack the cleanup instructions.
+        let safe = Self.stripChatML(trimmed)
         var prompt = "<|im_start|>system\n\(CleanupPrompt.system)<|im_end|>\n"
         for example in CleanupPrompt.examples {
             prompt += "<|im_start|>user\n\(example.input)<|im_end|>\n"
             prompt += "<|im_start|>assistant\n\(example.output)<|im_end|>\n"
         }
-        prompt += "<|im_start|>user\n\(trimmed)<|im_end|>\n<|im_start|>assistant\n"
+        prompt += "<|im_start|>user\n\(safe)<|im_end|>\n<|im_start|>assistant\n"
 
         let raw = await llm.getCompletion(from: prompt)
         // LLM.swift's getCompletion does NOT clear the context afterwards, so the
@@ -86,7 +91,10 @@ actor LLMCleaner: TextCleaner {
             .appendingPathComponent("Murmur/Models", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appendingPathComponent(fileName)
-        if FileManager.default.fileExists(atPath: dest.path) { return dest }
+        if FileManager.default.fileExists(atPath: dest.path) {
+            if ModelManifest.sizeMatches(fileName: fileName, at: dest) { return dest }
+            try? FileManager.default.removeItem(at: dest)
+        }
 
         guard let remote = URL(string: "https://huggingface.co/\(repo)/resolve/main/\(fileName)?download=true") else {
             throw CleanerError.modelLoadFailed
@@ -95,13 +103,32 @@ actor LLMCleaner: TextCleaner {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw CleanerError.downloadFailed
         }
-        try? FileManager.default.removeItem(at: dest)
-        try FileManager.default.moveItem(at: tmp, to: dest)
+        // Place atomically (replace if present, else move) rather than remove-then-move.
+        if FileManager.default.fileExists(atPath: dest.path) {
+            _ = try FileManager.default.replaceItemAt(dest, withItemAt: tmp)
+        } else {
+            try FileManager.default.moveItem(at: tmp, to: dest)
+        }
+        // Verify SHA-256 against the build-pinned hash before llama loads the GGUF.
+        do {
+            try ModelManifest.verify(fileName: fileName, at: dest)
+        } catch {
+            try? FileManager.default.removeItem(at: dest)
+            throw error
+        }
         return dest
     }
 
+    /// ChatML control tokens that must never survive into (or out of) user text.
+    private static let chatMLTokens = ["<|im_start|>", "<|im_end|>"]
+    private static func stripChatML(_ s: String) -> String {
+        chatMLTokens.reduce(s) { $0.replacingOccurrences(of: $1, with: "") }
+    }
+
     private static func tidy(_ raw: String) -> String {
-        var text = raw.replacingOccurrences(of: "<|im_end|>", with: "")
+        // Strip the full set of control tokens (not just <|im_end|>) so a stray
+        // <|im_start|> can't be pasted into the user's document.
+        var text = stripChatML(raw)
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.count > 1, text.hasPrefix("\""), text.hasSuffix("\"") {
             text = String(text.dropFirst().dropLast())

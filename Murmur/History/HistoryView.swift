@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import AppKit
+import OSLog
 import UniformTypeIdentifiers
 
 /// Searchable list of past transcripts. Click a row (or use the context menu) to
@@ -179,11 +180,18 @@ struct HistoryView: View {
 
     private func delete(_ item: Transcript) {
         context.delete(item)
-        try? context.save()
+        do { try context.save() }
+        catch { Self.log.error("Failed to delete transcript: \(String(describing: error), privacy: .public)") }
     }
 
     private func clearAll() {
-        try? context.delete(model: Transcript.self)
-        try? context.save()
+        do {
+            try context.delete(model: Transcript.self)
+            try context.save()
+        } catch {
+            Self.log.error("Failed to clear transcripts: \(String(describing: error), privacy: .public)")
+        }
     }
+
+    private static let log = Logger(subsystem: "com.murmur.app", category: "history")
 }

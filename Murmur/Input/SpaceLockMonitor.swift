@@ -34,9 +34,12 @@ final class SpaceLockMonitor {
     private static let log = Logger(subsystem: "com.murmur.app", category: "hotkey")
 
     /// Begin watching for the lock Space. Creates the tap on first use; idempotent.
-    func start() {
+    /// Returns whether the tap is active — `false` means Accessibility isn't granted,
+    /// so the hands-free Space/Esc gestures won't work and the caller can react.
+    @discardableResult
+    func start() -> Bool {
         armed = true
-        guard tap == nil else { return }
+        guard tap == nil else { return true }
 
         // Only keyDown is requested. tapDisabledByTimeout/ByUserInput are special
         // high-rawValue notifications the system always delivers — never OR them
@@ -52,13 +55,14 @@ final class SpaceLockMonitor {
         ) else {
             Self.log.error("SpaceLockMonitor: tap creation failed — Accessibility not granted?")
             armed = false
-            return
+            return false
         }
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         self.tap = tap
         self.runLoopSource = source
+        return true
     }
 
     /// Stop watching and tear the tap down. Idempotent.
@@ -77,20 +81,26 @@ final class SpaceLockMonitor {
 
     /// Called from the C trampoline on the main run loop. Returns nil to consume.
     fileprivate func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
-        // A slow callback (e.g. a beachball) makes the system disable the tap;
-        // re-enable so hands-free keeps working for the rest of the recording.
-        if type == .tapDisabledByTimeout {
+        // A slow callback (beachball) — or user input — makes the system disable the
+        // tap; re-enable so hands-free keeps working for the rest of the recording.
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
         }
         guard type == .keyDown else { return Unmanaged.passUnretained(event) }
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
-        // Esc discards the in-flight recording (same as the Trash button). Consumed
-        // so it doesn't also reach the focused app.
+        // A bare Esc discards the in-flight recording (same as the Trash button),
+        // consumed so it doesn't also reach the focused app. A *modified* Esc
+        // (⌘⎋ force-quit, ⌃⎋, ⌥⎋, ⇧⎋) belongs to the system / focused app — pass it
+        // through untouched rather than swallowing it for the whole recording.
         if keyCode == Self.escapeKeyCode {
-            onCancel()
-            return nil
+            let modifiers: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+            if event.flags.intersection(modifiers).isEmpty {
+                onCancel()
+                return nil
+            }
+            return Unmanaged.passUnretained(event)
         }
 
         // Space (while armed) locks into hands-free. Disarm first so a second quick
