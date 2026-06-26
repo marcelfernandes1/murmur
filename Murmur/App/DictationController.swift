@@ -33,6 +33,14 @@ final class DictationController {
     /// "audio" category with `AudioRecorder` so one log stream shows the whole path.
     private static let audioLog = Logger(subsystem: "com.murmur.app", category: "audio")
 
+    /// Held for the app's lifetime to keep macOS from App-Napping / throttling Murmur
+    /// while it sits idle in the menu bar. A napped background app wakes with latency,
+    /// so the FIRST hotkey after a few idle seconds was slow while rapid repeats were
+    /// instant — the reported "fast on repeat, laggy after idle" pattern. Uses the
+    /// "...AllowingIdleSystemSleep" variant so we stay responsive but never block the
+    /// Mac from sleeping.
+    private var appActivity: NSObjectProtocol?
+
     private var isRecording = false
     /// Hands-free: the recording was "locked" (Space while holding the trigger) so
     /// it keeps capturing after the trigger is released, until the next trigger
@@ -123,6 +131,12 @@ final class DictationController {
     }
 
     func bootstrap() {
+        // Keep Murmur out of App Nap so the dictation hotkey is handled instantly even
+        // after the app has been idle in the menu bar for a while (see appActivity).
+        appActivity = ProcessInfo.processInfo.beginActivity(
+            options: .userInitiatedAllowingIdleSystemSleep,
+            reason: "Respond to the dictation hotkey instantly, even after idle")
+
         hotkeys.onPress = { [weak self] in self?.handleTriggerDown() }
         hotkeys.onRelease = { [weak self] in self?.handleTriggerUp() }
         spaceLock.onLock = { [weak self] in self?.lockRecording() }
@@ -269,7 +283,12 @@ final class DictationController {
             appState.modelDownloadProgress = nil
             appState.modelPhase = .ready
             if awaitingResult { notch.showTranscribing() }
-            warmOtherModels()
+            // Proactive warming of every *other* model is intentionally NOT run: users
+            // settle on one model and rarely switch, so eagerly downloading + ANE-
+            // compiling the whole matrix on launch wastes disk / Neural Engine / battery
+            // and adds startup CPU contention for no real benefit. Models warm on demand
+            // the first time they're actually selected (with the existing progress UI).
+            // (warmOtherModels remains below, unused, in case we want it behind an opt-in.)
         case .failed(let message):
             appState.modelDownloadProgress = nil
             appState.modelPhase = .failed(message)
@@ -371,12 +390,18 @@ final class DictationController {
         dictationEngine = engine
         // A new dictation supersedes watching the previous field for edits.
         editWatcher.cancel()
-        // Immediate audio feedback on press, plus arm the Space-to-lock tap for the
-        // hands-free gesture (both honor their preference toggles).
-        if preferences.soundEffects { sounds.play(.start) }
-        if preferences.handsFreeLock, !spaceLock.start() {
-            Self.audioLog.error("Hands-free lock unavailable — Space-lock tap couldn't be created (Accessibility not granted?)")
-        }
+        // Show the notch the INSTANT the trigger goes down, and (below) kick off capture
+        // immediately — BEFORE the audio cue and the hands-free tap. Creating the Space-
+        // lock CGEventTap round-trips to the window server (slow on a busy/long-uptime
+        // system) and the cue touches audio output; neither belongs on the press→notch /
+        // press→record critical path, so they're deferred to just after capture goes
+        // live. The waveform stays flat until capture is actually live, then animates — a
+        // natural "I'm hearing you now" cue — so the instant notch can't mislead the user
+        // into talking before the mic is live. This also fixes the leading-word clipping
+        // that came from the notch (the user's go-cue) trailing the key press.
+        appState.status = .listening
+        notch.showListening()
+
         // The notch live preview only makes sense on a fast, non-autoregressive
         // engine. With Whisper, repeatedly transcribing the growing buffer is
         // O(n²) and starves the final transcription — so we skip it there and just
@@ -392,8 +417,15 @@ final class DictationController {
                     return
                 }
                 captureLive = true
-                appState.status = .listening
-                notch.showListening()
+                // Non-critical extras, now that capture is live and the notch is up: the
+                // "recording started" cue and arming Space-to-lock (the user can't reach
+                // for Space this fast, so arming it here is plenty early). Kept off the
+                // press critical path so a slow window-server tap-create can't delay the
+                // notch or the start of recording.
+                if preferences.soundEffects { sounds.play(.start) }
+                if preferences.handsFreeLock, !spaceLock.start() {
+                    Self.audioLog.error("Hands-free lock unavailable — Space-lock tap couldn't be created (Accessibility not granted?)")
+                }
                 if preferences.streaming && streamingCapable {
                     startStreamingLoop()
                 }

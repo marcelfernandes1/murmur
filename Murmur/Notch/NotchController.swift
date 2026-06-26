@@ -14,9 +14,14 @@ final class NotchController {
     // cutout), and a translucent Liquid-Glass floating pill on an external monitor.
     private lazy var notch: DynamicNotch<DictationNotchView, EmptyView, EmptyView> = {
         let model = model
-        return DynamicNotch(style: .auto) {
+        let notch = DynamicNotch(style: .auto) {
             DictationNotchView(model: model)
         }
+        // Keep DynamicNotchKit's polished spring entrance (the lag was never the notch
+        // animation — proven by instrumentation). `skipIntermediateHides` just makes
+        // phase swaps (listening → transcribing) direct instead of hide-then-show.
+        notch.transitionConfiguration.skipIntermediateHides = true
+        return notch
     }()
 
     /// Mirror DynamicNotchKit's own screen pick + notch test (`NSScreen.screens[0]`,

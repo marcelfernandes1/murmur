@@ -47,6 +47,31 @@ public final class WhisperModel: @unchecked Sendable {
         params.single_segment = false
         params.suppress_blank = true
 
+        // Anti-hallucination / anti-repetition hardening. Long dictations were looping
+        // (a phrase repeated many times) and dropping tail words — the classic
+        // whisper.cpp degenerate-decoding failure. Two guards fix it:
+        //
+        //   1. no_context: transcribe each internal 30 s window independently. By
+        //      default whisper.cpp seeds each window with the *previous* window's
+        //      tokens as a prompt; once a repeat starts it feeds itself and snowballs
+        //      across the rest of the take. Dropping the carry-over keeps a hiccup in
+        //      one window from poisoning everything after it. (No effect on takes that
+        //      fit in a single window — i.e. most dictations — so it's strictly safer.)
+        //
+        //   2. Temperature fallback: if a window decodes with suspiciously low entropy
+        //      (a repetition loop) or low average log-prob (garbage), re-decode it
+        //      hotter (0.0 → 0.2 → … → 1.0) so the model jumps out of the loop instead
+        //      of emitting it. These are whisper.cpp's own recommended thresholds, set
+        //      explicitly so a future change to the library defaults can't silently
+        //      disable the safety net.
+        params.no_context = true
+        params.temperature = 0.0
+        params.temperature_inc = 0.2
+        params.entropy_thold = 2.4
+        params.logprob_thold = -1.0
+        params.no_speech_thold = 0.6
+        params.suppress_nst = true         // drop non-speech tokens (annotation artifacts)
+
         // Hold C strings alive across the whole `whisper_full` call (the params
         // struct just borrows the pointers). `strdup` copies are freed on exit.
         //
