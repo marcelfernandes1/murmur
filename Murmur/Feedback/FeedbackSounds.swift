@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import OSLog
 
 /// Short, synthesized UI cues for the dictation lifecycle: a soft rising blip when
@@ -32,11 +32,20 @@ final class FeedbackSounds {
         }
     }
 
+    /// Serial queue for starting playback off the main thread. The first
+    /// `AVAudioPlayer.play()` to a Bluetooth output (AirPods) can block for a few hundred
+    /// ms while CoreAudio wakes the idle route; doing it off-main keeps that from ever
+    /// stalling the notch / waveform. The cue itself may land slightly late on cold
+    /// AirPods — an accepted trade for a simple, non-blocking implementation.
+    private static let playbackQueue = DispatchQueue(label: "com.murmur.app.feedback", qos: .userInitiated)
+
     /// Play a cue. Non-blocking; rewinds first so rapid re-triggers always restart.
     func play(_ effect: Effect) {
         guard let player = players[effect] else { return }
-        player.currentTime = 0
-        player.play()
+        Self.playbackQueue.async {
+            player.currentTime = 0
+            player.play()
+        }
     }
 
     // MARK: - Synthesis

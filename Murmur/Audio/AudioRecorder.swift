@@ -81,8 +81,11 @@ final class AudioRecorder: @unchecked Sendable {
 
     private static let logger = Logger(subsystem: "com.murmur.app", category: "audio")
 
-    /// Serial queue owning all capture lifecycle state.
-    private let lifecycleQueue = DispatchQueue(label: "com.murmur.app.audio.lifecycle")
+    /// Serial queue owning all capture lifecycle state. `.userInitiated` so bringing
+    /// the capture unit up on a key press isn't starved behind background work (e.g.
+    /// the post-launch model warm-up) — that starvation is what stretched start→live
+    /// latency and clipped the first words of a dictation.
+    private let lifecycleQueue = DispatchQueue(label: "com.murmur.app.audio.lifecycle", qos: .userInitiated)
 
     // Bluetooth format stabilization tuning.
     private static let stabilizePollInterval: TimeInterval = 0.15

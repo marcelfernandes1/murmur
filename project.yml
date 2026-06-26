@@ -9,8 +9,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.4.25"
-    CURRENT_PROJECT_VERSION: "59"
+    MARKETING_VERSION: "0.4.39"
+    CURRENT_PROJECT_VERSION: "73"
     PRODUCT_BUNDLE_IDENTIFIER: com.murmur.app
     ENABLE_HARDENED_RUNTIME: "YES"
     # Sign with a stable Development identity (not ad-hoc) so macOS keeps the
