@@ -7,9 +7,10 @@ import WhisperCppKit
 /// so we can A/B every ggml model variant (sizes × quantizations × English-only)
 /// against the WhisperKit/Parakeet engines to find the best speed/accuracy ratio.
 ///
-/// Unlike WhisperService (WhisperKit), whisper.cpp's `whisper_full` does its own
-/// internal 30 s windowing, so long audio transcribes correctly without us having
-/// to juggle timestamps — no "it cut off what I said past 30 s" caveat here.
+/// Long dictations are decoded as overlapping sub-30s chunks instead of one
+/// monolithic `whisper_full` call. In practice the monolithic path can lose
+/// synchronization on later windows and repeat an earlier phrase, which hides the
+/// real tail of the recording.
 actor WhisperCppService: SpeechEngine {
     /// ggml weights filename, e.g. `ggml-large-v3-turbo-q5_0.bin`.
     private let fileName: String
@@ -19,6 +20,10 @@ actor WhisperCppService: SpeechEngine {
 
     /// All ggml models live in this one Hugging Face repo.
     private static let repo = "ggerganov/whisper.cpp"
+    private static let sampleRate = 16_000
+    private static let longAudioThresholdSamples = 28 * sampleRate
+    private static let chunkSamples = 25 * sampleRate
+    private static let chunkOverlapSamples = 5 * sampleRate
 
     init(fileName: String) {
         self.fileName = fileName
@@ -37,10 +42,50 @@ actor WhisperCppService: SpeechEngine {
         let model = try await loadModel()
         // Synchronous inside the actor: serializes calls (whisper_full is not
         // reentrant on a shared context) and never touches the main thread.
+        if samples.count > Self.longAudioThresholdSamples {
+            return try transcribeLong(samples, model: model, language: language, vocabulary: vocabulary)
+        }
+        return try transcribeChunk(samples, model: model, language: language, vocabulary: vocabulary)
+    }
+
+    /// whisper.cpp can lose synchronization on long monolithic decodes and then
+    /// spend later audio windows repeating an earlier phrase. Decode overlapping
+    /// sub-30s chunks independently so a bad window cannot erase the rest of the
+    /// dictation.
+    private func transcribeLong(_ samples: [Float],
+                                model: WhisperModel,
+                                language: String?,
+                                vocabulary: [String]) throws -> String {
+        var chunks: [String] = []
+        var start = 0
+        let step = Self.chunkSamples - Self.chunkOverlapSamples
+
+        while start < samples.count {
+            let end = min(start + Self.chunkSamples, samples.count)
+            let slice = Array(samples[start..<end])
+            let text = try transcribeChunk(slice, model: model, language: language, vocabulary: vocabulary)
+            chunks.append(text)
+
+            #if DEBUG
+            Self.fileLog("WHISPER_CPP chunk start=\(start) end=\(end) chars=\(text.count)")
+            #endif
+
+            guard end < samples.count else { break }
+            start += step
+        }
+
+        let stitched = TranscriptCleaner.stitchChunks(chunks)
+        return TranscriptCleaner.removeDegenerateRepeats(stitched)
+    }
+
+    private func transcribeChunk(_ samples: [Float],
+                                 model: WhisperModel,
+                                 language: String?,
+                                 vocabulary: [String]) throws -> String {
         guard let text = model.transcribe(samples: samples, language: language, vocabulary: vocabulary) else {
             throw WhisperCppError.inferenceFailed
         }
-        return text
+        return TranscriptCleaner.removeDegenerateRepeats(text)
     }
 
     private func loadModel() async throws -> WhisperModel {
@@ -104,3 +149,20 @@ actor WhisperCppService: SpeechEngine {
 
     enum WhisperCppError: Error { case modelLoadFailed, inferenceFailed }
 }
+
+#if DEBUG
+private extension WhisperCppService {
+    static func fileLog(_ message: String) {
+        let line = "\(message)\n"
+        let url = URL(fileURLWithPath: "/tmp/murmur_audio.log")
+        guard let data = line.data(using: .utf8) else { return }
+        if let h = try? FileHandle(forWritingTo: url) {
+            h.seekToEndOfFile()
+            h.write(data)
+            try? h.close()
+        } else {
+            try? data.write(to: url)
+        }
+    }
+}
+#endif
