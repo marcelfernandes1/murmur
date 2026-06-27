@@ -547,6 +547,7 @@ final class DictationController {
                     language: preferences.language.code,
                     vocabulary: biasVocabulary()
                 )
+                text = TranscriptCleaner.removeDegenerateRepeats(text)
                 signposter.endInterval("transcribe", transcribeState)
                 // The exact ASR output, recorded for the comparison screen so it
                 // shows every dictation (raw vs. final) — even when nothing changed.
