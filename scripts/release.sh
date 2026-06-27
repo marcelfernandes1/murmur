@@ -185,12 +185,12 @@ spctl -a -vv -t exec "$APP" 2>&1 | sed 's/^/  /' || true
 # --- Publish ---------------------------------------------------------------
 if [[ "$publish" -eq 1 ]]; then
   command -v gh >/dev/null || { echo "error: gh CLI required for --publish" >&2; exit 1; }
-  echo "==> Publishing GitHub release $TAG…"
-  if gh release view "$TAG" >/dev/null 2>&1; then
-    gh release upload "$TAG" "$DMG" "$STABLE_DMG" "$DIST_DIR/appcast.xml" --clobber
+  echo "==> Publishing GitHub release ${TAG}…"
+  if gh release view "${TAG}" >/dev/null 2>&1; then
+    gh release upload "${TAG}" "$DMG" "$STABLE_DMG" "$DIST_DIR/appcast.xml" --clobber
   else
-    gh release create "$TAG" "$DMG" "$STABLE_DMG" "$DIST_DIR/appcast.xml" \
-      --target main --title "Murmur $VERSION" --generate-notes
+    gh release create "${TAG}" "$DMG" "$STABLE_DMG" "$DIST_DIR/appcast.xml" \
+      --target main --title "Murmur ${VERSION}" --generate-notes
   fi
-  echo "Released: https://github.com/$REPO_SLUG/releases/tag/$TAG"
+  echo "Released: https://github.com/${REPO_SLUG}/releases/tag/${TAG}"
 fi
