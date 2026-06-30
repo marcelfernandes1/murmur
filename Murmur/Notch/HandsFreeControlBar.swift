@@ -24,6 +24,11 @@ final class HandsFreeControlBar {
     private let model = ControlBarModel()
     private var panel: NSPanel?
     private var isShown = false
+    /// Bumped on every `show()`. A `hide()`'s fade-out captures the value live at the
+    /// time it starts; if a newer `show()` has run by the time the fade completes, the
+    /// generations differ and the stale completion is skipped — so a quick lock right
+    /// after a commit can never order the just-revealed bubble back out.
+    private var showGeneration = 0
 
     /// Height of DictationNotchView's row inside the notch (mic + waveform).
     private static let notchContentHeight: CGFloat = 36
@@ -40,6 +45,12 @@ final class HandsFreeControlBar {
     func show() {
         if panel == nil { build() }
         guard let panel else { return }
+        showGeneration &+= 1
+        // `animatingIn` only chooses the *entrance* (slide+fade vs. already up). Either
+        // way `layout` re-orders the panel front and restores its alpha, so a cached
+        // panel that a prior hide() left ordered-out or at alpha 0 always becomes
+        // visible again — the reuse path now matches a fresh build()'s, which is why a
+        // mid-session lock would otherwise silently show nothing until the app relaunched.
         layout(panel, animatingIn: !isShown)
         isShown = true
     }
@@ -47,6 +58,7 @@ final class HandsFreeControlBar {
     func hide() {
         guard isShown, let panel else { return }
         isShown = false
+        let generation = showGeneration
         let origin = panel.frame.origin
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.18
@@ -54,9 +66,10 @@ final class HandsFreeControlBar {
             panel.animator().alphaValue = 0
             panel.animator().setFrameOrigin(NSPoint(x: origin.x, y: origin.y + 6))
         }, completionHandler: { [weak self] in
-            // Runs on the main thread; a newer show() may have re-displayed it.
+            // Runs on the main thread; a newer show() may have re-displayed it. Skip the
+            // order-out if either the visible flag flipped back on or a newer show() ran.
             MainActor.assumeIsolated {
-                guard let self, !self.isShown else { return }
+                guard let self, !self.isShown, self.showGeneration == generation else { return }
                 self.panel?.orderOut(nil)
             }
         })
@@ -117,7 +130,11 @@ final class HandsFreeControlBar {
                 panel.animator().setFrameOrigin(NSPoint(x: x, y: y))
             }
         } else {
+            // Already shown: reposition, and defensively reassert visibility (alpha +
+            // front order) so this path can never leave the bubble stuck invisible.
             panel.setFrameOrigin(NSPoint(x: x, y: y))
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
         }
     }
 }

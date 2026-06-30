@@ -175,9 +175,21 @@ final class DictationController {
         }
         // Visual preview of the notch + hands-free bubble together (no recording),
         // for screenshotting the layout: `MURMUR_PREVIEW_CONTROLBAR=1 open Murmur.app`.
-        if ProcessInfo.processInfo.environment["MURMUR_PREVIEW_CONTROLBAR"] != nil {
+        if let mode = ProcessInfo.processInfo.environment["MURMUR_PREVIEW_CONTROLBAR"] {
             notch.showListening()
             controlBar.show()
+            // `=cycle` hammers the show/hide reuse path (the cached panel is built once
+            // then reused) to confirm a mid-session lock always re-reveals the bubble.
+            if mode == "cycle" {
+                Task { @MainActor in
+                    for _ in 0..<12 {
+                        try? await Task.sleep(for: .milliseconds(300))
+                        controlBar.hide()
+                        try? await Task.sleep(for: .milliseconds(300))
+                        controlBar.show()
+                    }
+                }
+            }
         }
 
         attachStateHandler(to: engine)
