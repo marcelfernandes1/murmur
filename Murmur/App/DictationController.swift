@@ -58,6 +58,10 @@ final class DictationController {
     /// The transcribe→deliver Task, tracked so a new (or cancelled) dictation can
     /// abandon an in-flight one rather than letting a stale result paste itself.
     private var transcribeTask: Task<Void, Never>?
+    /// Fires only if a transcription runs absurdly long (engine hang), so an in-flight
+    /// dictation that never returns can't permanently freeze the UI on "Transcribing…"
+    /// now that an accidental re-press no longer force-resets that state.
+    private var transcribeWatchdog: Task<Void, Never>?
     /// True once `recorder.start()` has actually brought capture up.
     private var captureLive = false
     /// Trigger released before capture went live — commit as soon as it does.
@@ -345,6 +349,13 @@ final class DictationController {
             if isLocked { commitRecording() }
             return
         }
+        // A trigger press while the previous dictation is still transcribing/polishing
+        // would otherwise fall through to beginRecording(), which cancels the in-flight
+        // transcribeTask and discards its result — so an accidental tap during the
+        // (often brief) transcription window silently loses a finished dictation. Ignore
+        // it: the result is delivered as normal. A genuinely wedged transcription can't
+        // lock the user out forever because the watchdog (see commitRecording) recovers.
+        if awaitingResult { return }
         beginRecording()
     }
 
@@ -377,6 +388,7 @@ final class DictationController {
         streamTask?.cancel()
         streamTask = nil
         transcribeTask?.cancel()
+        transcribeWatchdog?.cancel()
         _ = recorder.stop(reason: .hotkeyCancelled)
         recordingStartedAt = nil
         awaitingResult = false
@@ -392,10 +404,12 @@ final class DictationController {
         commitPending = false
         recordingStartedAt = recordingClock.now
         errorClearTask?.cancel()
-        // Starting a new dictation abandons any still-in-flight transcription from a
-        // previous one (its result must not paste into this new context) and clears a
-        // stuck "awaiting" state, so a wedged prior dictation can't freeze the UI.
+        // Defensive cleanup of any prior transcribe task/watchdog. handleTriggerDown now
+        // refuses to start a new dictation while one is still transcribing (awaitingResult),
+        // so this no longer abandons a live result — it just clears a finished-but-untracked
+        // task before the fresh dictation begins.
         transcribeTask?.cancel()
+        transcribeWatchdog?.cancel()
         awaitingResult = false
         // Bind the engine for this whole dictation up front, so switching the model in
         // Settings mid-recording can't make the commit transcribe on an unloaded one.
@@ -550,6 +564,24 @@ final class DictationController {
         dictationGeneration &+= 1
         let generation = dictationGeneration
         let engine = dictationEngine ?? self.engine
+
+        // Safety net for a hung engine. The deadline scales with audio length (a long
+        // dictation legitimately transcribes + polishes for longer) and is deliberately
+        // far larger than any real run — so it never cuts a valid transcription, only
+        // breaks a true never-returns hang. Without this, ignoring the re-press above
+        // would leave a wedged dictation stuck on "Transcribing…" until app restart.
+        let watchdogDeadline = max(30.0, duration * 6.0)
+        transcribeWatchdog?.cancel()
+        transcribeWatchdog = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(watchdogDeadline))
+            guard !Task.isCancelled, let self else { return }
+            guard self.awaitingResult, self.dictationGeneration == generation else { return }
+            self.transcribeTask?.cancel()
+            self.awaitingResult = false
+            self.flagError(.error("Transcription timed out"),
+                           notch: "Transcription timed out — please try again")
+        }
+
         transcribeTask = Task {
             let signposter = Self.signposter
             do {
@@ -595,11 +627,13 @@ final class DictationController {
                 deliver(text, original: rawTranscript)
                 appState.status = .idle
                 awaitingResult = false
+                transcribeWatchdog?.cancel()
             } catch {
                 // Only the current dictation owns the shared UI state.
                 guard generation == dictationGeneration else { return }
                 flagError(.error(error.localizedDescription), notch: error.localizedDescription)
                 awaitingResult = false
+                transcribeWatchdog?.cancel()
             }
         }
     }
