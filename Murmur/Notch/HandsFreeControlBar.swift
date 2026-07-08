@@ -29,15 +29,44 @@ final class HandsFreeControlBar {
     /// generations differ and the stale completion is skipped — so a quick lock right
     /// after a commit can never order the just-revealed bubble back out.
     private var showGeneration = 0
+    private var spaceObserver: NSObjectProtocol?
 
     /// Height of DictationNotchView's row inside the notch (mic + waveform).
     private static let notchContentHeight: CGFloat = 36
     /// Elegant gap between the notch/pill bottom and the bubble.
     private static let gapBelowNotch: CGFloat = 14
+    /// Show on every Space (desktop), stay put during Exposé, and remain visible
+    /// over fullscreen apps — the same recipe as the notch panel.
+    private static let allSpacesBehavior: NSWindow.CollectionBehavior =
+        [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 
     init() {
         model.onDone = { [weak self] in self?.onDone() }
         model.onCancel = { [weak self] in self?.onCancel() }
+        // Despite `.canJoinAllSpaces`, in the field this cached panel can end up pinned
+        // to the desktop it was last shown on — switch Spaces mid-lock and the bubble
+        // is gone (while the notch, whose window is rebuilt every dictation, follows
+        // fine). So on every Space change, re-apply the behavior and re-order the
+        // panel front: verified to pull even a hard-pinned panel onto the just-
+        // activated Space. Gated on `isShown`, so it can never resurrect a bubble
+        // that hide() dismissed.
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isShown, let panel = self.panel else { return }
+                panel.collectionBehavior = Self.allSpacesBehavior
+                panel.alphaValue = 1
+                panel.orderFrontRegardless()
+            }
+        }
+    }
+
+    deinit {
+        if let spaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
+        }
     }
 
     // MARK: - Show / hide
@@ -91,7 +120,10 @@ final class HandsFreeControlBar {
         bar.backgroundColor = .clear
         bar.hasShadow = false // the SwiftUI glass + shadow provide the depth
         bar.level = .screenSaver
-        bar.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        bar.collectionBehavior = Self.allSpacesBehavior
+        // NSPanel hides itself on app deactivation by default — an overlay that must
+        // stay up while the user works in *other* apps can never want that.
+        bar.hidesOnDeactivate = false
         bar.ignoresMouseEvents = false
         bar.contentView = host
         bar.setContentSize(host.fittingSize)
