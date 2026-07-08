@@ -74,6 +74,30 @@ BUILD="$(grep -E '^[[:space:]]*CURRENT_PROJECT_VERSION:' project.yml | head -1 |
 TAG="v$VERSION"
 echo "Releasing Murmur $VERSION (build $BUILD)"
 
+# Guard: Sparkle decides "is there an update?" by comparing the BUILD number
+# (sparkle:version = CURRENT_PROJECT_VERSION), NOT the marketing string. Ship a
+# build <= the one already live and every "Check for Updates" says "you're up to
+# date" even though the marketing version changed — a silent no-op update (this
+# bit us going 0.4.43→0.4.44, both build 77). Refuse it when publishing. Skips
+# gracefully if the feed can't be fetched (offline / first-ever release).
+if [[ "$publish" -eq 1 ]]; then
+  LIVE_BUILD="$(curl -fsSL "https://github.com/$REPO_SLUG/releases/latest/download/appcast.xml" 2>/dev/null \
+    | sed -nE 's#.*<sparkle:version>([0-9]+)</sparkle:version>.*#\1#p' | head -1 || true)"
+  if [[ -n "$LIVE_BUILD" ]]; then
+    if ! [[ "$BUILD" =~ ^[0-9]+$ ]]; then
+      echo "error: CURRENT_PROJECT_VERSION ('$BUILD') is not an integer build number." >&2; exit 1
+    fi
+    if (( BUILD <= LIVE_BUILD )); then
+      echo "error: build $BUILD is not greater than the published build $LIVE_BUILD —" >&2
+      echo "       Sparkle would treat this as 'no update'. Bump CURRENT_PROJECT_VERSION in project.yml." >&2
+      exit 1
+    fi
+    echo "Build-number guard: $BUILD > $LIVE_BUILD (published) ✓"
+  else
+    echo "Build-number guard: no published appcast to compare against — skipping."
+  fi
+fi
+
 BUILD_DIR="$PWD/build"
 DIST_DIR="$PWD/dist"
 ARCHIVE="$BUILD_DIR/Murmur.xcarchive"
