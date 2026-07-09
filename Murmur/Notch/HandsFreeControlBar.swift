@@ -30,6 +30,8 @@ final class HandsFreeControlBar {
     /// after a commit can never order the just-revealed bubble back out.
     private var showGeneration = 0
     private var spaceObserver: NSObjectProtocol?
+    /// Fires once a second while the bubble should be up; rescues it if it isn't.
+    private var watchdog: Timer?
 
     /// Height of DictationNotchView's row inside the notch (mic + waveform).
     private static let notchContentHeight: CGFloat = 36
@@ -43,22 +45,21 @@ final class HandsFreeControlBar {
     init() {
         model.onDone = { [weak self] in self?.onDone() }
         model.onCancel = { [weak self] in self?.onCancel() }
-        // Despite `.canJoinAllSpaces`, in the field this cached panel can end up pinned
-        // to the desktop it was last shown on — switch Spaces mid-lock and the bubble
-        // is gone (while the notch, whose window is rebuilt every dictation, follows
-        // fine). So on every Space change, re-apply the behavior and re-order the
-        // panel front: verified to pull even a hard-pinned panel onto the just-
-        // activated Space. Gated on `isShown`, so it can never resurrect a bubble
-        // that hide() dismissed.
+        // Despite `.canJoinAllSpaces`, a panel that survives across desktops can end
+        // up pinned to the Space it was last shown on — switch Spaces mid-lock and the
+        // bubble is gone (while the notch, whose window is rebuilt every dictation,
+        // follows fine). v0.4.44 tried rescuing the pinned panel in place (re-apply
+        // the behavior + orderFrontRegardless); that worked in a clean-room repro but
+        // NOT in the field. So do what makes the notch immune: replace the panel with
+        // a freshly built one, which has no Space affinity by construction. Gated on
+        // `isShown`, so it can never resurrect a bubble that hide() dismissed.
         spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.isShown, let panel = self.panel else { return }
-                panel.collectionBehavior = Self.allSpacesBehavior
-                panel.alphaValue = 1
-                panel.orderFrontRegardless()
+                guard let self, self.isShown else { return }
+                self.presentFreshPanel(animated: false)
             }
         }
     }
@@ -67,26 +68,26 @@ final class HandsFreeControlBar {
         if let spaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
         }
+        watchdog?.invalidate()
     }
 
     // MARK: - Show / hide
 
     func show() {
-        if panel == nil { build() }
-        guard let panel else { return }
         showGeneration &+= 1
-        // `animatingIn` only chooses the *entrance* (slide+fade vs. already up). Either
-        // way `layout` re-orders the panel front and restores its alpha, so a cached
-        // panel that a prior hide() left ordered-out or at alpha 0 always becomes
-        // visible again — the reuse path now matches a fresh build()'s, which is why a
-        // mid-session lock would otherwise silently show nothing until the app relaunched.
-        layout(panel, animatingIn: !isShown)
+        // Always a brand-new panel: reusing one across desktops is what let the window
+        // server pin the bubble to a stale Space in the first place. `animated` only
+        // chooses the *entrance* (slide+fade for a fresh lock vs. instantly up when
+        // re-presenting an already-shown bubble).
+        presentFreshPanel(animated: !isShown)
         isShown = true
+        startWatchdog()
     }
 
     func hide() {
         guard isShown, let panel else { return }
         isShown = false
+        stopWatchdog()
         let generation = showGeneration
         let origin = panel.frame.origin
         NSAnimationContext.runAnimationGroup({ ctx in
@@ -95,18 +96,26 @@ final class HandsFreeControlBar {
             panel.animator().alphaValue = 0
             panel.animator().setFrameOrigin(NSPoint(x: origin.x, y: origin.y + 6))
         }, completionHandler: { [weak self] in
-            // Runs on the main thread; a newer show() may have re-displayed it. Skip the
-            // order-out if either the visible flag flipped back on or a newer show() ran.
+            // Runs on the main thread; a newer show() may have replaced the panel (it
+            // orders this one out itself). Skip unless this fade is still the current
+            // story: the visible flag stayed off and no newer show() ran.
             MainActor.assumeIsolated {
                 guard let self, !self.isShown, self.showGeneration == generation else { return }
-                self.panel?.orderOut(nil)
+                panel.orderOut(nil)
+                if self.panel === panel { self.panel = nil }
             }
         })
     }
 
     // MARK: - Building
 
-    private func build() {
+    /// Build a fresh panel and put it on screen, replacing (and ordering out) any
+    /// existing one. A new window has no window-server Space affinity, so unlike the
+    /// v0.4.44 in-place rescue this cannot leave the bubble stranded on another desktop.
+    private func presentFreshPanel(animated: Bool) {
+        let old = panel
+        old?.orderOut(nil)
+
         let host = FirstMouseHostingView(rootView: HandsFreeControlBarView(model: model))
         host.layoutSubtreeIfNeeded()
 
@@ -124,10 +133,40 @@ final class HandsFreeControlBar {
         // NSPanel hides itself on app deactivation by default — an overlay that must
         // stay up while the user works in *other* apps can never want that.
         bar.hidesOnDeactivate = false
+        // We keep strong references and never call close(); without this, a stray
+        // close would over-release the ARC-owned panel.
+        bar.isReleasedWhenClosed = false
         bar.ignoresMouseEvents = false
         bar.contentView = host
         bar.setContentSize(host.fittingSize)
         panel = bar
+        layout(bar, animatingIn: animated)
+    }
+
+    // MARK: - Watchdog
+
+    /// The Space-change observer is the primary rescue, but it only helps when the
+    /// notification actually arrives. Once a second while the bubble should be up,
+    /// verify it truly is on the active desktop (`occlusionState`) and rebuild if not
+    /// — so no unreproduced failure mode can strand the bubble for more than ~1s.
+    private func startWatchdog() {
+        guard watchdog == nil else { return }
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isShown, let panel = self.panel else { return }
+                if !panel.occlusionState.contains(.visible) {
+                    self.presentFreshPanel(animated: false)
+                }
+            }
+        }
+        // .common keeps the check firing while menus / drags spin the run loop.
+        RunLoop.main.add(timer, forMode: .common)
+        watchdog = timer
+    }
+
+    private func stopWatchdog() {
+        watchdog?.invalidate()
+        watchdog = nil
     }
 
     private func layout(_ panel: NSPanel, animatingIn: Bool) {
