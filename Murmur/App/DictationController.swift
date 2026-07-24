@@ -50,6 +50,9 @@ final class DictationController {
     private var didWarmOthers = false
     private var streamTask: Task<Void, Never>?
     private var undoClearTask: Task<Void, Never>?
+    /// The specific mishearing added by the most recent learn, so an undo removes
+    /// just that variant rather than the whole term (which may hold others).
+    private var lastLearnedVariant: String?
     private var errorClearTask: Task<Void, Never>?
     /// The begin-recording Task (audio-unit start). Tracked so a quick release that
     /// beats a slow (e.g. Bluetooth) `recorder.start()` can defer the commit until
@@ -744,10 +747,16 @@ final class DictationController {
     }
 
     /// Store a detected correction and flash a "Learned <term>" confirmation,
-    /// keeping it briefly undoable from the menu.
+    /// keeping it briefly undoable from the menu. A `nil` return means the edit was
+    /// a revert of one of our own replacements (the store forgot that variant
+    /// instead of learning its inverse) — nothing to celebrate or undo.
     private func learn(_ candidate: CorrectionDetector.Candidate) {
         FieldEditWatcher.diag("learn: storing “\(candidate.heard)” → “\(candidate.corrected)” + flashing notch")
-        let entry = corrections.learn(heard: candidate.heard, corrected: candidate.corrected)
+        guard let entry = corrections.learn(heard: candidate.heard, corrected: candidate.corrected) else {
+            FieldEditWatcher.diag("learn: treated as a revert / no-op — nothing learned")
+            return
+        }
+        lastLearnedVariant = candidate.heard
         appState.recentlyLearned = entry
         notch.showLearned(entry.corrected)
 
@@ -759,10 +768,17 @@ final class DictationController {
         }
     }
 
-    /// Undo the most recently learned word (invoked from the menu).
+    /// Undo the most recently learned word (invoked from the menu). Removes just
+    /// the mishearing that was added, so a term that already held other variants
+    /// keeps them; the term is dropped only if that was its last variant.
     func undoLastLearned() {
         guard let entry = appState.recentlyLearned else { return }
-        corrections.remove(entry)
+        if let variant = lastLearnedVariant {
+            corrections.removeVariant(variant, from: entry)
+        } else {
+            corrections.remove(entry)
+        }
+        lastLearnedVariant = nil
         appState.recentlyLearned = nil
         notch.finish(message: "Removed “\(entry.corrected)”")
     }
