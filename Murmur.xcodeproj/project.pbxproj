@@ -31,6 +31,7 @@
 		50C8AAFBEEB582ED8650490A /* SingleKeyRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7701A0233E768F91300BB26F /* SingleKeyRecorder.swift */; };
 		633AF5443B393306246B6798 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EE3570B5B635B2B770C752E /* WaveformView.swift */; };
 		63A6582FA026AF09E2A7F720 /* CleanupComparisonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31C67F329B092E2081510812 /* CleanupComparisonView.swift */; };
+		63B02157FCCEDCE36354A4E0 /* DecodeCoverage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C2D75469E936FF140D70794 /* DecodeCoverage.swift */; };
 		68CD4D751C1034533737645F /* DynamicNotchKit in Frameworks */ = {isa = PBXBuildFile; productRef = F6E5EB14D72FDFE937417AD0 /* DynamicNotchKit */; };
 		6B364348C3EA82D24D0BC326 /* DesignSystemGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9B6EFE39C77508B00923263 /* DesignSystemGallery.swift */; };
 		6B69B773207E03058DADE024 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69102DFB3C77FB36C38F5338 /* HotkeyManager.swift */; };
@@ -81,6 +82,7 @@
 		163E144FC17541C89AA23977 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		16E26D887EA4A65459879FE3 /* OnboardingWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingWindowController.swift; sourceTree = "<group>"; };
 		193503FD333DF66B49E3E597 /* ModelManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManifest.swift; sourceTree = "<group>"; };
+		1C2D75469E936FF140D70794 /* DecodeCoverage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecodeCoverage.swift; sourceTree = "<group>"; };
 		1ED8048E32D48DEA392FFA05 /* ParakeetService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetService.swift; sourceTree = "<group>"; };
 		26BE6EB28C43A4AA45C0F9F5 /* CleanupGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupGuard.swift; sourceTree = "<group>"; };
 		27920B99968B5506EC2EC1D2 /* HandsFreeControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandsFreeControlBar.swift; sourceTree = "<group>"; };
@@ -203,6 +205,7 @@
 				26BE6EB28C43A4AA45C0F9F5 /* CleanupGuard.swift */,
 				53B0F21ADEE03003F1D375A4 /* CleanupPrompt.swift */,
 				ACD6717653C34A491F548779 /* CorrectionDetector.swift */,
+				1C2D75469E936FF140D70794 /* DecodeCoverage.swift */,
 				62DC13FB2394C0085B94D8D9 /* LLMCleaner.swift */,
 				D209A459BC530CDF1E8982BE /* ModelDownloader.swift */,
 				193503FD333DF66B49E3E597 /* ModelManifest.swift */,
@@ -442,6 +445,7 @@
 				B0445A07A5B43E52140C26A0 /* CleanupPrompt.swift in Sources */,
 				78894A1417766FB71E56A83D /* CorrectionDetector.swift in Sources */,
 				D7AA265743FD8FCA08221584 /* CorrectionStore.swift in Sources */,
+				63B02157FCCEDCE36354A4E0 /* DecodeCoverage.swift in Sources */,
 				6B364348C3EA82D24D0BC326 /* DesignSystemGallery.swift in Sources */,
 				D7743C9609DE2FCF1F6890BF /* DictationController.swift in Sources */,
 				37E87ABBA43B720022654C8B /* DictationNotchView.swift in Sources */,
@@ -561,7 +565,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 80;
+				CURRENT_PROJECT_VERSION = 81;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -576,7 +580,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.4.47;
+				MARKETING_VERSION = 0.4.48;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.murmur.app;
@@ -626,7 +630,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 80;
+				CURRENT_PROJECT_VERSION = 81;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -647,7 +651,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.4.47;
+				MARKETING_VERSION = 0.4.48;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

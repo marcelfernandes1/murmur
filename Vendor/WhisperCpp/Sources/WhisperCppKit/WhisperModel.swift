@@ -7,6 +7,22 @@ import whisper
 /// app target (where they'd clash with LLM.swift's bundled llama/ggml). See
 /// Package.swift for the full rationale.
 ///
+/// One decoded stretch of audio: its text and where it sits in the samples that
+/// were handed to `transcribe`. The timing is what lets the caller notice that a
+/// decode covered only part of the audio it was given (see `WhisperCppService`).
+public struct WhisperSegment: Sendable, Equatable {
+    public let text: String
+    /// Seconds from the start of the samples passed to `transcribe`.
+    public let start: Double
+    public let end: Double
+
+    public init(text: String, start: Double, end: Double) {
+        self.text = text
+        self.start = start
+        self.end = end
+    }
+}
+
 /// `@unchecked Sendable`: the context is not reentrant, but callers serialize all
 /// access (Murmur's `WhisperCppService` actor runs one transcription at a time).
 public final class WhisperModel: @unchecked Sendable {
@@ -31,14 +47,35 @@ public final class WhisperModel: @unchecked Sendable {
 
     /// Transcribe 16 kHz mono float samples. `language` nil = auto-detect;
     /// `vocabulary` biases decoding toward custom terms via the initial prompt.
-    /// Returns nil on inference failure. Synchronous and blocking — call off the
-    /// main thread and serialized (see class note).
-    public func transcribe(samples: [Float], language: String?, vocabulary: [String]) -> String? {
-        guard !samples.isEmpty else { return "" }
+    /// Returns nil on inference failure, otherwise the decoded segments in time
+    /// order. Synchronous and blocking — call off the main thread and serialized
+    /// (see class note).
+    public func transcribe(samples: [Float], language: String?, vocabulary: [String]) -> [WhisperSegment]? {
+        guard !samples.isEmpty else { return [] }
 
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.n_threads = Int32(max(1, ProcessInfo.processInfo.activeProcessorCount - 2))
-        params.no_timestamps = true        // whisper_full does its own 30s windowing
+
+        // Timestamps ON. This is not cosmetic — it is what keeps whisper.cpp from
+        // silently discarding audio.
+        //
+        // whisper_full decodes in 30 s windows and, after each one, advances its
+        // read cursor by however much the window actually decoded (read off the
+        // timestamp tokens the model emits). With `no_timestamps = true` there are
+        // no such tokens, so it has nothing to derive that from and advances by a
+        // blind, full 30 s instead. A window that ends its decode early — the
+        // model emitting end-of-text after a couple of words, which real speech
+        // does provoke occasionally — therefore takes the ENTIRE remaining 30 s of
+        // audio with it, unrecoverably, and the take just stops mid-sentence. That
+        // is the "it transcribed the first half of what I said" bug.
+        //
+        // With timestamps on, the same early stop costs only the seconds actually
+        // decoded: the cursor advances a little, the next window re-reads the
+        // audio that was missed, and nothing is lost. It also gives the caller
+        // real per-segment timings, which `WhisperCppService` uses to verify that
+        // a decode covered the audio it was handed (see `firstRecoverableGap`).
+        // Output text is unchanged — segment text never contains the timestamps.
+        params.no_timestamps = false
         params.print_progress = false
         params.print_realtime = false
         params.print_timestamps = false
@@ -93,14 +130,18 @@ public final class WhisperModel: @unchecked Sendable {
         }
         guard status == 0 else { return nil }
 
-        var transcript = ""
+        // Timestamps are centiseconds from the start of `samples`.
+        var segments: [WhisperSegment] = []
         let n = whisper_full_n_segments(ctx)
         for i in 0..<n {
-            if let cstr = whisper_full_get_segment_text(ctx, i) {
-                transcript += String(cString: cstr)
-            }
+            guard let cstr = whisper_full_get_segment_text(ctx, i) else { continue }
+            let text = String(cString: cstr).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            let start = Double(whisper_full_get_segment_t0(ctx, i)) / 100.0
+            let end = Double(whisper_full_get_segment_t1(ctx, i)) / 100.0
+            segments.append(WhisperSegment(text: text, start: start, end: max(start, end)))
         }
-        return transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        return segments
     }
 
     deinit { whisper_free(ctx) }

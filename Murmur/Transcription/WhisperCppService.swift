@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import WhisperCppKit
 
 /// whisper.cpp-backed engine (Metal-accelerated via the official XCFramework,
@@ -18,12 +19,30 @@ actor WhisperCppService: SpeechEngine {
     private var loadTask: Task<WhisperModel, Error>?
     private var stateHandler: (@Sendable (EngineLoadState) -> Void)?
 
+    /// Shares the "audio" category with `AudioRecorder` / `DictationController`
+    /// so one log stream shows capture and transcription together.
+    private static let log = Logger(subsystem: "com.murmur.app", category: "audio")
+
     /// All ggml models live in this one Hugging Face repo.
     private static let repo = "ggerganov/whisper.cpp"
     private static let sampleRate = 16_000
     private static let longAudioThresholdSamples = 28 * sampleRate
     private static let chunkSamples = 25 * sampleRate
     private static let chunkOverlapSamples = 5 * sampleRate
+
+    // MARK: Coverage recovery tuning
+    //
+    // Even with timestamps on (see WhisperModel), whisper.cpp has paths that
+    // abandon a window outright — most notably its own no-speech check, which
+    // can decide a window is silence and skip all 30 s of it. When that lands on
+    // real speech the take loses that stretch with no error of any kind. So we
+    // check the decode against the audio: every second we handed in should be
+    // accounted for by some segment, and any stretch that isn't gets decoded
+    // again on its own and spliced back into place.
+
+    /// Hard cap on re-decodes per chunk so a pathological take can't spin.
+    /// What counts as a gap lives in `DecodeCoverage`.
+    private static let maxRecoveryPasses = 4
 
     init(fileName: String) {
         self.fileName = fileName
@@ -78,13 +97,45 @@ actor WhisperCppService: SpeechEngine {
         return TranscriptCleaner.removeDegenerateRepeats(stitched)
     }
 
+    /// Decode one sub-30s slice, then verify the decode actually covered it.
+    /// Any speech-bearing stretch whisper.cpp skipped is decoded again on its own
+    /// and spliced back in time order, so a bailed-out window costs a re-decode
+    /// instead of the rest of the dictation.
     private func transcribeChunk(_ samples: [Float],
                                  model: WhisperModel,
                                  language: String?,
                                  vocabulary: [String]) throws -> String {
-        guard let text = model.transcribe(samples: samples, language: language, vocabulary: vocabulary) else {
+        guard var segments = model.transcribe(samples: samples, language: language, vocabulary: vocabulary) else {
             throw WhisperCppError.inferenceFailed
         }
+
+        let reference = DecodeCoverage.speechReferenceLevel(samples)
+        var passes = 0
+        while passes < Self.maxRecoveryPasses,
+              let gap = DecodeCoverage.firstRecoverableGap(in: segments, samples: samples,
+                                                           reference: reference) {
+            passes += 1
+            let recovered = model.transcribe(samples: Array(samples[gap.start..<gap.end]),
+                                             language: language, vocabulary: vocabulary) ?? []
+            let from = Double(gap.start) / Double(Self.sampleRate)
+            let to = Double(gap.end) / Double(Self.sampleRate)
+            // Logged at every occurrence: this firing means whisper.cpp dropped
+            // speech, so it's the trail to follow if the bug ever resurfaces.
+            Self.log.warning("coverage gap \(from, privacy: .public)s–\(to, privacy: .public)s was not transcribed → re-decoded, recovered \(recovered.count, privacy: .public) segments")
+            #if DEBUG
+            Self.fileLog("WHISPER_CPP recovered gap \(gap.start)–\(gap.end) segments=\(recovered.count)")
+            #endif
+            // Nothing came back for a stretch we believed held speech — stop
+            // rather than re-decoding the same silence up to the pass cap.
+            guard !recovered.isEmpty else { break }
+            let offset = Double(gap.start) / Double(Self.sampleRate)
+            segments.append(contentsOf: recovered.map {
+                WhisperSegment(text: $0.text, start: $0.start + offset, end: $0.end + offset)
+            })
+            segments.sort { $0.start < $1.start }
+        }
+
+        let text = segments.map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
         return TranscriptCleaner.removeDegenerateRepeats(text)
     }
 
