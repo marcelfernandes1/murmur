@@ -180,6 +180,9 @@ final class DictationController {
         if ProcessInfo.processInfo.environment["MURMUR_TEST_CAPTURE"] != nil {
             Self.runCaptureSelfTest()
         }
+        if ProcessInfo.processInfo.environment["MURMUR_TEST_COVERAGE"] != nil {
+            DecodeCoverage.runSelfTest()
+        }
         // Visual preview of the notch + hands-free bubble together (no recording),
         // for screenshotting the layout: `MURMUR_PREVIEW_CONTROLBAR=1 open Murmur.app`.
         if let mode = ProcessInfo.processInfo.environment["MURMUR_PREVIEW_CONTROLBAR"] {
