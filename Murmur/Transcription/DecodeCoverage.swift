@@ -17,6 +17,40 @@ import WhisperCppKit
 enum DecodeCoverage {
     static let sampleRate = 16_000
 
+    // MARK: Speech presence
+    //
+    // Handing whisper a take with no speech in it does not produce an empty
+    // transcript — it produces an invented one. On a silent take it emits its
+    // stock hallucinations ("Thank you.", "."), and when a custom vocabulary is
+    // in play it simply echoes the initial prompt back, so every accidental
+    // trigger pasted "VTURB, Whop, Fernandes". whisper's own `no_speech_prob`
+    // does not catch this: it reports 0.00 on pure silence, measured.
+    //
+    // Level alone can't decide it either — a quiet dictation and room tone can
+    // sit at the same amplitude. What separates them is *shape*: speech is
+    // modulated (syllables, stops, gaps between words) so its loud frames tower
+    // over its quiet ones, while room tone is flat. Measured over 100 ms frames:
+    // room tone p90/p10 = 1.0; speech = 8.1 even at a peak of 0.03, and higher
+    // at normal levels. Suppression needs BOTH a flat shape and a low level, so
+    // speech recorded into a noisy room (flat-ish, but loud) is never written
+    // off.
+
+    /// Below this ratio of loud frames to quiet frames, audio looks unmodulated.
+    static let minSpeechDynamicRange: Float = 3.0
+    /// …and only that flat audio this quiet counts as no speech at all.
+    static let maxSilenceLevel: Float = 0.01
+
+    /// Whether these samples contain anything worth transcribing. False means a
+    /// silent take: decoding it would invent words, so the caller should not.
+    static func containsSpeech(_ samples: [Float]) -> Bool {
+        let levels = frameLevels(samples[samples.startIndex..<samples.endIndex]).sorted()
+        guard !levels.isEmpty else { return false }
+        let p10 = levels[min(levels.count - 1, Int(Double(levels.count) * 0.1))]
+        let p90 = levels[min(levels.count - 1, Int(Double(levels.count) * 0.9))]
+        let dynamicRange = p90 / max(p10, 1e-6)
+        return dynamicRange >= minSpeechDynamicRange || p90 >= maxSilenceLevel
+    }
+
     /// Ignore uncovered stretches shorter than this — ordinary gaps between
     /// segments, not lost audio.
     static let minGapSeconds = 1.5
@@ -160,7 +194,52 @@ enum DecodeCoverage {
             if !ok { failed += 1 }
             print("[Coverage] \(ok ? "PASS" : "FAIL") \(c.name)  got=\(String(describing: got)) expect=\(String(describing: c.expect))")
         }
-        print("[Coverage] \(cases.count - failed)/\(cases.count) passed")
+
+        // Speech presence. Levels below are the ones actually measured off the
+        // reporter's mic: silent takes peaked at 0.0033–0.0089, every real
+        // dictation at 0.0285 or above.
+        func noise(seconds: Double, peak: Float) -> [Float] {
+            var state: UInt64 = 88172645463325252
+            return (0..<Int(seconds * Double(rate))).map { _ in
+                state ^= state << 13; state ^= state >> 7; state ^= state << 17
+                return (Float(state % 2000) / 1000 - 1) * peak
+            }
+        }
+        /// Speech-shaped: loud syllables separated by quiet gaps.
+        func speech(seconds: Double, peak: Float) -> [Float] {
+            (0..<Int(seconds * Double(rate))).map { i in
+                let syllable = (i / (rate / 5)) % 2 == 0        // 200 ms on, 200 ms off
+                let level = syllable ? peak : peak * 0.01
+                return (i % 2 == 0 ? level : -level)
+            }
+        }
+        struct SpeechCase { let name: String; let samples: [Float]; let expect: Bool }
+        let speechCases: [SpeechCase] = [
+            .init(name: "room tone at the level that echoed the vocabulary",
+                  samples: noise(seconds: 0.94, peak: 0.0033), expect: false),
+            .init(name: "room tone, 2 s", samples: noise(seconds: 2, peak: 0.0057), expect: false),
+            .init(name: "room tone at the loudest silent take seen",
+                  samples: noise(seconds: 1.4, peak: 0.0089), expect: false),
+            .init(name: "digital silence", samples: [Float](repeating: 0, count: 2 * rate), expect: false),
+            .init(name: "normal dictation", samples: speech(seconds: 3, peak: 0.09), expect: true),
+            .init(name: "very quiet dictation", samples: speech(seconds: 3, peak: 0.03), expect: true),
+            // Must survive: flat-looking because of the noise, but plainly loud.
+            .init(name: "speech in a noisy room stays speech",
+                  samples: zip(speech(seconds: 3, peak: 0.05), noise(seconds: 3, peak: 0.04)).map(+),
+                  expect: true),
+            // Must survive: too short to show modulation, but plainly loud.
+            .init(name: "one short loud word", samples: speech(seconds: 0.3, peak: 0.08), expect: true),
+            .init(name: "empty buffer", samples: [], expect: false),
+        ]
+        for c in speechCases {
+            let got = containsSpeech(c.samples)
+            let ok = got == c.expect
+            if !ok { failed += 1 }
+            print("[Coverage] \(ok ? "PASS" : "FAIL") speech: \(c.name)  got=\(got) expect=\(c.expect)")
+        }
+
+        let total = cases.count + speechCases.count
+        print("[Coverage] \(total - failed)/\(total) passed")
         fflush(stdout) // GUI launch block-buffers stdout; flush so the result is observable.
         return failed
     }

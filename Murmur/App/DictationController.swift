@@ -93,16 +93,19 @@ final class DictationController {
         case accidentalTap   // too short to be real + the trigger was barely held
         case noAudio         // held a real beat but the engine delivered ~nothing
         case noSignal        // audio arrived but it's digital silence (dead mic)
+        case noSpeech        // the mic works, there was just nothing said
         case transcribe      // good buffer — go transcribe it
     }
 
     /// `held` is the wall-clock trigger hold (nil if unknown ⇒ never an accidental tap).
-    static func captureOutcome(sampleCount: Int, held: Duration?, peak: Float) -> CaptureOutcome {
+    /// `hasSpeech` comes from `DecodeCoverage.containsSpeech`.
+    static func captureOutcome(sampleCount: Int, held: Duration?, peak: Float, hasSpeech: Bool) -> CaptureOutcome {
         if sampleCount < 1_600 { // < 0.1 s at 16 kHz
             if let held, held < minIntentionalHold { return .accidentalTap }
             return .noAudio
         }
         if peak < 0.0005 { return .noSignal }
+        if !hasSpeech { return .noSpeech }
         return .transcribe
     }
 
@@ -182,6 +185,7 @@ final class DictationController {
         }
         if ProcessInfo.processInfo.environment["MURMUR_TEST_COVERAGE"] != nil {
             DecodeCoverage.runSelfTest()
+            TranscriptCleaner.runPromptEchoSelfTest()
         }
         // Visual preview of the notch + hands-free bubble together (no recording),
         // for screenshotting the layout: `MURMUR_PREVIEW_CONTROLBAR=1 open Murmur.app`.
@@ -531,7 +535,8 @@ final class DictationController {
         Self.audioLog.log("commitRecording: samples=\(samples.count, privacy: .public) duration=\(duration, privacy: .public)s peak=\(peak, privacy: .public)")
 
         // Decide what to do with the buffer (pure + unit-tested — see runCaptureSelfTest).
-        switch Self.captureOutcome(sampleCount: samples.count, held: held, peak: peak) {
+        let hasSpeech = DecodeCoverage.containsSpeech(samples)
+        switch Self.captureOutcome(sampleCount: samples.count, held: held, peak: peak, hasSpeech: hasSpeech) {
         case .accidentalTap:
             // A quick brush of the trigger that captured nothing — the user never
             // meant to dictate. Drop it silently so it doesn't flash a warning or
@@ -549,6 +554,17 @@ final class DictationController {
             // the input delivered digital silence (no Mic permission, a muted/wrong
             // device, etc.). Transcribing that is pointless — flag it instead.
             flagError(.error("No microphone signal"), notch: "No mic signal — check input & permission")
+            return
+        case .noSpeech:
+            // The mic was working; nothing was said. Transcribing this is worse
+            // than useless — whisper does not return an empty string for silence,
+            // it invents one, and with a custom vocabulary loaded it just echoes
+            // the vocabulary back ("VTURB, Whop, Fernandes"). Drop it the way an
+            // accidental tap is dropped: quietly, with nothing pasted and nothing
+            // written to history.
+            Self.audioLog.log("no speech in \(duration, privacy: .public)s take (peak \(peak, privacy: .public)) → discarded without transcribing")
+            appState.status = .idle
+            notch.dismiss()
             return
         case .transcribe:
             break
@@ -592,12 +608,17 @@ final class DictationController {
             let signposter = Self.signposter
             do {
                 let transcribeState = signposter.beginInterval("transcribe")
+                let vocabulary = biasVocabulary()
                 var text = try await engine.transcribe(
                     samples,
                     language: preferences.language.code,
-                    vocabulary: biasVocabulary()
+                    vocabulary: vocabulary
                 )
                 text = TranscriptCleaner.removeDegenerateRepeats(text)
+                // Both whisper engines bias recognition by feeding the vocabulary
+                // in as an initial prompt, and both will happily transcribe that
+                // prompt when the speech runs out — so drop it if it comes back.
+                text = TranscriptCleaner.stripPromptEcho(text, vocabulary: vocabulary)
                 signposter.endInterval("transcribe", transcribeState)
                 // The exact ASR output, recorded for the comparison screen so it
                 // shows every dictation (raw vs. final) — even when nothing changed.
@@ -662,7 +683,11 @@ final class DictationController {
     /// Env-gated self-test for the capture decision (mirrors CorrectionDetector.runSelfTest).
     /// Run with: `MURMUR_TEST_CAPTURE=1 open Murmur.app` and read the log for PASS/FAIL.
     static func runCaptureSelfTest() {
-        struct Case { let name: String; let samples: Int; let held: Duration?; let peak: Float; let expect: CaptureOutcome }
+        struct Case {
+            let name: String; let samples: Int; let held: Duration?; let peak: Float
+            var hasSpeech = true
+            let expect: CaptureOutcome
+        }
         let cases: [Case] = [
             // The reported bug: a light, accidental tap captures nothing → no warning.
             .init(name: "accidental brush (50 ms, empty)", samples: 0, held: .milliseconds(50), peak: 0, expect: .accidentalTap),
@@ -682,10 +707,19 @@ final class DictationController {
             .init(name: "valid dictation (3 s)", samples: 48_000, held: .seconds(3), peak: 0.3, expect: .transcribe),
             // A short-but-real word (held past the threshold, audible) transcribes.
             .init(name: "short word (600 ms, audible)", samples: 9_600, held: .milliseconds(600), peak: 0.15, expect: .transcribe),
+            // The reported bug: a working mic, nothing said. Must not reach the
+            // engine — it would invent words or echo the vocabulary back.
+            .init(name: "room tone, nothing said", samples: 15_000, held: .seconds(1), peak: 0.0033,
+                  hasSpeech: false, expect: .noSpeech),
+            .init(name: "long take of room tone", samples: 48_000, held: .seconds(3), peak: 0.0089,
+                  hasSpeech: false, expect: .noSpeech),
+            // A dead mic is still reported as a dead mic, not as "nothing said".
+            .init(name: "dead mic outranks no-speech", samples: 48_000, held: .seconds(3), peak: 0.0001,
+                  hasSpeech: false, expect: .noSignal),
         ]
         var passed = 0
         for c in cases {
-            let got = captureOutcome(sampleCount: c.samples, held: c.held, peak: c.peak)
+            let got = captureOutcome(sampleCount: c.samples, held: c.held, peak: c.peak, hasSpeech: c.hasSpeech)
             let ok = got == c.expect
             if ok { passed += 1 }
             print("[CaptureOutcome] \(ok ? "PASS" : "FAIL") \(c.name)  got=\(got) expect=\(c.expect)")
