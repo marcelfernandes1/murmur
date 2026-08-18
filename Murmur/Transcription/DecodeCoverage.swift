@@ -91,6 +91,43 @@ enum DecodeCoverage {
         return nil
     }
 
+    // MARK: Fabricated tail
+    //
+    // whisper does not stop at the last word — it keeps decoding into whatever
+    // silence follows, and on silence it invents. Its stock line is "Thank you."
+    // (the same one a wholly silent take produces), tacked onto the end of a
+    // perfectly good dictation. 124 transcripts in the field ended that way.
+    //
+    // Timestamps make it separable from real speech: a fabricated closing sits
+    // over audio where nobody is talking. So rather than pattern-matching the
+    // text against a list of known whisper tics — which would never be complete —
+    // trailing segments are dropped when there is no speech underneath them.
+
+    /// A trailing segment is only ever dropped if it holds less speech than this.
+    static let maxFabricatedTailSpeechSeconds = 0.15
+    /// …and is short. Real invented closings are; the cap bounds what a bad
+    /// timestamp could cost to a few words rather than a sentence.
+    static let maxFabricatedTailWords = 10
+
+    /// Drop trailing segments that sit on silence — whisper talking to itself
+    /// after the speaker stopped. Stops at the first segment with speech under
+    /// it, so nothing before the real end of the dictation is ever considered.
+    static func trimmingFabricatedTail(_ segments: [WhisperSegment],
+                                       samples: [Float],
+                                       reference: Float) -> [WhisperSegment] {
+        var result = segments.sorted { $0.start < $1.start }
+        while let last = result.last {
+            let start = clampToSamples(last.start, limit: samples.count)
+            let end = clampToSamples(last.end, limit: samples.count)
+            // Can't judge a segment with no measurable span — leave it alone.
+            guard end > start else { break }
+            guard last.text.split(whereSeparator: \.isWhitespace).count <= maxFabricatedTailWords else { break }
+            guard speechSeconds(samples[start..<end], reference: reference) < maxFabricatedTailSpeechSeconds else { break }
+            result.removeLast()
+        }
+        return result
+    }
+
     /// How loud this take's speech is, as the 90th-percentile frame level. Used
     /// as the yardstick for the gap check so a quietly-recorded dictation isn't
     /// written off as silence, and a noisy one doesn't count its noise as speech.
@@ -238,7 +275,52 @@ enum DecodeCoverage {
             print("[Coverage] \(ok ? "PASS" : "FAIL") speech: \(c.name)  got=\(got) expect=\(c.expect)")
         }
 
-        let total = cases.count + speechCases.count
+        // Fabricated tail. `speech` below is 200 ms on / 200 ms off, so a span
+        // over the speech region reads as speech and one over silence does not.
+        struct TailCase {
+            let name: String
+            let samples: [Float]
+            let segments: [WhisperSegment]
+            let expectKept: Int
+        }
+        let realThenSilence = speech(seconds: 10, peak: 0.09) + [Float](repeating: 0, count: 5 * rate)
+        let tailCases: [TailCase] = [
+            // The reported bug: "Thank you." invented over trailing silence.
+            .init(name: "invented closing over trailing silence", samples: realThenSilence,
+                  segments: [segment(0, 10), WhisperSegment(text: "Thank you.", start: 11, end: 13)],
+                  expectKept: 1),
+            // Several in a row all go.
+            .init(name: "two invented closings", samples: realThenSilence,
+                  segments: [segment(0, 10),
+                             WhisperSegment(text: "Thank you.", start: 10.5, end: 12),
+                             WhisperSegment(text: "Bye.", start: 12.5, end: 14)],
+                  expectKept: 1),
+            // Must NOT trim: the last segment is real speech.
+            .init(name: "real final segment is kept", samples: realThenSilence,
+                  segments: [segment(0, 5), segment(5, 10)], expectKept: 2),
+            .init(name: "nothing but real speech", samples: speech(seconds: 10, peak: 0.09),
+                  segments: [segment(0, 5), segment(5, 10)], expectKept: 2),
+            // Must NOT trim: too long to be a whisper tic, so leave it be even
+            // though the timestamps put it over silence.
+            .init(name: "long trailing segment is left alone", samples: realThenSilence,
+                  segments: [segment(0, 10),
+                             WhisperSegment(text: "one two three four five six seven eight nine ten eleven",
+                                            start: 11, end: 13)],
+                  expectKept: 2),
+            // Must NOT trim on a zero-length span — nothing to judge.
+            .init(name: "zero-length span is left alone", samples: realThenSilence,
+                  segments: [segment(0, 10), WhisperSegment(text: "Thank you.", start: 12, end: 12)],
+                  expectKept: 2),
+        ]
+        for c in tailCases {
+            let reference = speechReferenceLevel(c.samples)
+            let kept = trimmingFabricatedTail(c.segments, samples: c.samples, reference: reference)
+            let ok = kept.count == c.expectKept
+            if !ok { failed += 1 }
+            print("[Coverage] \(ok ? "PASS" : "FAIL") tail: \(c.name)  kept=\(kept.count) expect=\(c.expectKept)")
+        }
+
+        let total = cases.count + speechCases.count + tailCases.count
         print("[Coverage] \(total - failed)/\(total) passed")
         fflush(stdout) // GUI launch block-buffers stdout; flush so the result is observable.
         return failed

@@ -437,6 +437,10 @@ final class DictationController {
         // that came from the notch (the user's go-cue) trailing the key press.
         appState.status = .listening
         notch.showListening()
+        // Wake the target app's accessibility tree now, while the user is still
+        // talking, so the focused-field check at delivery has something to read.
+        // Electron apps expose nothing until asked, and asking is not instant.
+        accessibility.primeFrontmostApp()
 
         // The notch live preview only makes sense on a fast, non-autoregressive
         // engine. With Whisper, repeatedly transcribing the growing buffer is
@@ -737,10 +741,19 @@ final class DictationController {
         appState.lastTranscript = text
 
         // Get the text to the user FIRST — pasting must not wait on history I/O.
-        appState.accessibilityEnabled = accessibility.isTrusted
-        let canInsert = accessibility.isTrusted
-            && !accessibility.isSecureInputActive
-            && accessibility.isEditableFieldFocused()
+        let trusted = accessibility.isTrusted
+        appState.accessibilityEnabled = trusted
+        let secureInput = accessibility.isSecureInputActive
+        let editableFocused = trusted && accessibility.isEditableFieldFocused()
+        let canInsert = trusted && !secureInput && editableFocused
+        if !canInsert {
+            // Falling back to the clipboard is a silent downgrade — the text is
+            // safe but it does not land where the user is typing, and nothing
+            // says why. Always log which of the three conditions refused, plus
+            // what actually had focus, so a report of "it just says Copied" is
+            // answerable from the log instead of guesswork.
+            Self.audioLog.warning("delivery fell back to clipboard: trusted=\(trusted, privacy: .public) secureInput=\(secureInput, privacy: .public) editableFieldFocused=\(editableFocused, privacy: .public) \(self.accessibility.focusDiagnostics(), privacy: .public)")
+        }
 
         let deliverState = signposter.beginInterval("paste")
         if canInsert {
@@ -752,7 +765,7 @@ final class DictationController {
                 editWatcher.start(insertedText: text)
             }
         } else {
-            FieldEditWatcher.diag("deliver: NOT inserted (canInsert=false) → copied, no watcher. trusted=\(accessibility.isTrusted) secureInput=\(accessibility.isSecureInputActive) editableFocused=\(accessibility.isEditableFieldFocused())")
+            FieldEditWatcher.diag("deliver: NOT inserted (canInsert=false) → copied, no watcher. trusted=\(trusted) secureInput=\(secureInput) editableFocused=\(editableFocused)")
             TextInserter.copyToClipboard(text)
             notch.finish(message: "Copied")
         }
