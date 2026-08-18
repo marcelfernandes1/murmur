@@ -8,10 +8,18 @@ import WhisperCppKit
 /// so we can A/B every ggml model variant (sizes × quantizations × English-only)
 /// against the WhisperKit/Parakeet engines to find the best speed/accuracy ratio.
 ///
-/// Long dictations are decoded as overlapping sub-30s chunks instead of one
-/// monolithic `whisper_full` call. In practice the monolithic path can lose
-/// synchronization on later windows and repeat an earlier phrase, which hides the
-/// real tail of the recording.
+/// Takes are decoded in ONE `whisper_full` call, however long they are —
+/// whisper.cpp does its own 30 s windowing internally and, with timestamps on
+/// (see `WhisperModel`), advances correctly between windows.
+///
+/// This used to be split into overlapping 25 s chunks that were transcribed
+/// separately and stitched back together by matching words across the seam.
+/// That existed to contain the damage from the `no_timestamps` bug, and once
+/// that was fixed it was pure downside: every 20 s the audio was cut at an
+/// arbitrary instant, usually mid-phrase, and the two halves had to be rejoined
+/// by guessing which words overlapped. On repetitive speech that guess deletes
+/// real words — a dictation lost "thank you page" at exactly such a seam. There
+/// is no seam now, so there is nothing to guess.
 actor WhisperCppService: SpeechEngine {
     /// ggml weights filename, e.g. `ggml-large-v3-turbo-q5_0.bin`.
     private let fileName: String
@@ -26,9 +34,6 @@ actor WhisperCppService: SpeechEngine {
     /// All ggml models live in this one Hugging Face repo.
     private static let repo = "ggerganov/whisper.cpp"
     private static let sampleRate = 16_000
-    private static let longAudioThresholdSamples = 28 * sampleRate
-    private static let chunkSamples = 25 * sampleRate
-    private static let chunkOverlapSamples = 5 * sampleRate
 
     // MARK: Coverage recovery tuning
     //
@@ -40,9 +45,10 @@ actor WhisperCppService: SpeechEngine {
     // accounted for by some segment, and any stretch that isn't gets decoded
     // again on its own and spliced back into place.
 
-    /// Hard cap on re-decodes per chunk so a pathological take can't spin.
+    /// Hard cap on re-decodes per take so a pathological one can't spin. Higher
+    /// than it needed to be per-chunk, since one take is now one decode.
     /// What counts as a gap lives in `DecodeCoverage`.
-    private static let maxRecoveryPasses = 4
+    private static let maxRecoveryPasses = 8
 
     init(fileName: String) {
         self.fileName = fileName
@@ -61,50 +67,17 @@ actor WhisperCppService: SpeechEngine {
         let model = try await loadModel()
         // Synchronous inside the actor: serializes calls (whisper_full is not
         // reentrant on a shared context) and never touches the main thread.
-        if samples.count > Self.longAudioThresholdSamples {
-            return try transcribeLong(samples, model: model, language: language, vocabulary: vocabulary)
-        }
-        return try transcribeChunk(samples, model: model, language: language, vocabulary: vocabulary)
+        return try decode(samples, model: model, language: language, vocabulary: vocabulary)
     }
 
-    /// whisper.cpp can lose synchronization on long monolithic decodes and then
-    /// spend later audio windows repeating an earlier phrase. Decode overlapping
-    /// sub-30s chunks independently so a bad window cannot erase the rest of the
-    /// dictation.
-    private func transcribeLong(_ samples: [Float],
-                                model: WhisperModel,
-                                language: String?,
-                                vocabulary: [String]) throws -> String {
-        var chunks: [String] = []
-        var start = 0
-        let step = Self.chunkSamples - Self.chunkOverlapSamples
-
-        while start < samples.count {
-            let end = min(start + Self.chunkSamples, samples.count)
-            let slice = Array(samples[start..<end])
-            let text = try transcribeChunk(slice, model: model, language: language, vocabulary: vocabulary)
-            chunks.append(text)
-
-            #if DEBUG
-            Self.fileLog("WHISPER_CPP chunk start=\(start) end=\(end) chars=\(text.count)")
-            #endif
-
-            guard end < samples.count else { break }
-            start += step
-        }
-
-        let stitched = TranscriptCleaner.stitchChunks(chunks)
-        return TranscriptCleaner.removeDegenerateRepeats(stitched)
-    }
-
-    /// Decode one sub-30s slice, then verify the decode actually covered it.
-    /// Any speech-bearing stretch whisper.cpp skipped is decoded again on its own
-    /// and spliced back in time order, so a bailed-out window costs a re-decode
+    /// Decode the take, then verify the decode actually covered it. Any
+    /// speech-bearing stretch whisper.cpp skipped is decoded again on its own and
+    /// spliced back in time order, so a bailed-out window costs a re-decode
     /// instead of the rest of the dictation.
-    private func transcribeChunk(_ samples: [Float],
-                                 model: WhisperModel,
-                                 language: String?,
-                                 vocabulary: [String]) throws -> String {
+    private func decode(_ samples: [Float],
+                        model: WhisperModel,
+                        language: String?,
+                        vocabulary: [String]) throws -> String {
         guard var segments = model.transcribe(samples: samples, language: language, vocabulary: vocabulary) else {
             throw WhisperCppError.inferenceFailed
         }
@@ -135,7 +108,15 @@ actor WhisperCppService: SpeechEngine {
             segments.sort { $0.start < $1.start }
         }
 
-        let text = segments.map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
+        // whisper keeps decoding past the last word and invents a closing over the
+        // trailing silence ("Thank you."). Drop anything at the end that has no
+        // speech under it, after recovery so a real dropped tail is back first.
+        let trimmed = DecodeCoverage.trimmingFabricatedTail(segments, samples: samples, reference: reference)
+        if trimmed.count < segments.count {
+            Self.log.log("dropped \(segments.count - trimmed.count, privacy: .public) fabricated trailing segment(s) sitting on silence")
+        }
+
+        let text = trimmed.map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
         return TranscriptCleaner.removeDegenerateRepeats(text)
     }
 
