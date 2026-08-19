@@ -45,12 +45,12 @@ enum CorrectionDetector {
         }
         guard let i = changed else { return nil }
 
-        // The changed word must lie within the text we inserted (when we know
-        // where that was), not in surrounding content the user happened to edit.
-        if let inserted = insertedRange {
-            let wordRange = NSRange(beforeTokens[i].range, in: before)
-            guard NSIntersectionRange(wordRange, inserted).length > 0 else { return nil }
-        }
+        // The changed word must lie within the text we inserted. A nil range used
+        // to skip this check entirely, which meant an edit anywhere in the
+        // document could be learned as a mishearing of something never spoken.
+        guard let inserted = insertedRange else { return nil }
+        let wordRange = NSRange(beforeTokens[i].range, in: before)
+        guard NSIntersectionRange(wordRange, inserted).length > 0 else { return nil }
 
         let heard = beforeTokens[i].text
         let corrected = afterTokens[i].text
@@ -236,7 +236,8 @@ enum CorrectionDetector {
     /// Run a handful of cases and print PASS/FAIL. Triggered by setting the
     /// `MURMUR_TEST_CORRECTIONS` environment variable, so detection quality can
     /// be sanity-checked without the GUI.
-    static func runSelfTest() {
+    @discardableResult
+    static func runSelfTest() -> Int {
         struct Case { let before: String; let after: String; let expect: Candidate? }
         let cases: [Case] = [
             .init(before: "I met Jon yesterday", after: "I met John yesterday",
@@ -263,11 +264,35 @@ enum CorrectionDetector {
         ]
         var passed = 0
         for c in cases {
-            let got = candidate(before: c.before, after: c.after, insertedRange: nil)
+            // These fixtures are edits INSIDE dictated text, so the whole string
+            // is the inserted span. Passing nil here used to work by accident:
+            // the containment check simply did not run, which is the hole that
+            // let an edit anywhere in a document be learned as a mishearing.
+            let whole = NSRange(location: 0, length: (c.before as NSString).length)
+            let got = candidate(before: c.before, after: c.after, insertedRange: whole)
             let ok = got == c.expect
             if ok { passed += 1 }
             print("[CorrectionDetector] \(ok ? "PASS" : "FAIL") “\(c.before)” → “\(c.after)”  got=\(String(describing: got)) expect=\(String(describing: c.expect))")
         }
-        print("[CorrectionDetector] \(passed)/\(cases.count) passed")
+
+        // Without a known insertion span nothing may be learned at all.
+        let unknownSpan = candidate(before: "I met Jon yesterday",
+                                    after: "I met John yesterday", insertedRange: nil)
+        let refuses = unknownSpan == nil
+        if refuses { passed += 1 }
+        print("[CorrectionDetector] \(refuses ? "PASS" : "FAIL") refuses to learn when the inserted span is unknown")
+
+        // An edit OUTSIDE the inserted span is someone else's text.
+        let outside = candidate(before: "I met Jon yesterday",
+                                after: "I met John yesterday",
+                                insertedRange: NSRange(location: 0, length: 5))
+        let ignoresOutside = outside == nil
+        if ignoresOutside { passed += 1 }
+        print("[CorrectionDetector] \(ignoresOutside ? "PASS" : "FAIL") ignores an edit outside the inserted span")
+
+        let total = cases.count + 2
+        print("[CorrectionDetector] \(passed)/\(total) passed")
+        fflush(stdout)
+        return total - passed
     }
 }

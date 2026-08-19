@@ -1,11 +1,13 @@
 import Foundation
 import LLM
+import OSLog
 
 /// Wispr-style post-transcription cleanup with a local LLM (llama.cpp / Metal,
 /// via LLM.swift). Removes fillers + false starts, converts spoken numbers to
 /// digits, and fixes punctuation — fully offline. Stateless: each call builds a
 /// fresh ChatML prompt (no growing history).
 actor LLMCleaner: TextCleaner {
+    private static let log = Logger(subsystem: "com.murmur.app", category: "cleanup")
     private let repo: String
     private let fileName: String
     private var llm: LLM?
@@ -25,10 +27,24 @@ actor LLMCleaner: TextCleaner {
         _ = try? await load()
     }
 
+    /// Context budget shared by the system prompt, the few-shot examples, the
+    /// transcript AND the generated output. `maxTokenCount` below is 4096; the
+    /// prompt scaffolding costs roughly 500, and the output is about as long as
+    /// the input, so anything past this simply cannot round-trip.
+    private static let maxTranscriptCharacters = 6_000
+
     /// Returns the cleaned text, or the original on any failure (never blocks delivery).
     func clean(_ text: String) async -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return text }
+        // Too long to fit the context. The model does not error on overrun — it
+        // stops generating mid-sentence and returns the partial text, which is a
+        // valid subsequence of the original and used to sail through CleanupGuard.
+        // Skipping cleanup loses some polish; truncating loses the user's words.
+        guard trimmed.count <= Self.maxTranscriptCharacters else {
+            Self.log.log("skipping cleanup: \(trimmed.count, privacy: .public) chars exceeds the model's context budget")
+            return trimmed
+        }
         guard let llm = try? await load() else { return text }
 
         // Defense-in-depth: strip ChatML control tokens from the transcript before

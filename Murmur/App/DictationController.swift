@@ -195,17 +195,32 @@ final class DictationController {
 
         // Sanity-check correction detection from the CLI (mirrors MURMUR_BENCH):
         // `MURMUR_TEST_CORRECTIONS=1 open Murmur.app` prints PASS/FAIL to the log.
-        if ProcessInfo.processInfo.environment["MURMUR_TEST_CORRECTIONS"] != nil {
-            CorrectionDetector.runSelfTest()
-            CorrectionStore.runSelfTest()
+
+        // Self-tests. Failure counts are summed and, with MURMUR_TEST_EXIT set,
+        // the process exits non-zero — otherwise a failing test printed to a
+        // stdout nobody reads and the app just carried on launching.
+        var testFailures = 0
+        var ranTests = false
+        let env = ProcessInfo.processInfo.environment
+        if env["MURMUR_TEST_CORRECTIONS"] != nil {
+            ranTests = true
+            testFailures += CorrectionDetector.runSelfTest()
+            testFailures += CorrectionStore.runSelfTest()
         }
-        if ProcessInfo.processInfo.environment["MURMUR_TEST_CAPTURE"] != nil {
-            Self.runCaptureSelfTest()
+        if env["MURMUR_TEST_CAPTURE"] != nil {
+            ranTests = true
+            testFailures += Self.runCaptureSelfTest()
         }
-        if ProcessInfo.processInfo.environment["MURMUR_TEST_COVERAGE"] != nil {
-            DecodeCoverage.runSelfTest()
-            TranscriptCleaner.runPromptEchoSelfTest()
-            AudioWAV.runSelfTest()
+        if env["MURMUR_TEST_COVERAGE"] != nil {
+            ranTests = true
+            testFailures += DecodeCoverage.runSelfTest()
+            testFailures += TranscriptCleaner.runPromptEchoSelfTest()
+            testFailures += AudioWAV.runSelfTest()
+        }
+        if ranTests {
+            print("[SelfTest] \(testFailures == 0 ? "ALL PASSED" : "\(testFailures) FAILURES")")
+            fflush(stdout)
+            if env["MURMUR_TEST_EXIT"] != nil { exit(testFailures == 0 ? 0 : 1) }
         }
         // Visual preview of the notch + hands-free bubble together (no recording),
         // for screenshotting the layout: `MURMUR_PREVIEW_CONTROLBAR=1 open Murmur.app`.
@@ -579,7 +594,15 @@ final class DictationController {
                 // Preview only the most recent ~8s so each pass stays cheap and
                 // can't pile up or block the final transcription on release.
                 let recent = full.count > 128_000 ? Array(full.suffix(128_000)) : full
-                let text = try? await engine.transcribe(recent, language: language, vocabulary: vocab)
+                // Preview pass — skipped by the engine if the committed decode is
+                // already running, so a disposable preview can never contend with
+                // the result the user is waiting for.
+                let text: String?
+                if let parakeet = engine as? ParakeetService {
+                    text = try? await parakeet.transcribePreview(recent, language: language, vocabulary: vocab)
+                } else {
+                    text = try? await engine.transcribe(recent, language: language, vocabulary: vocab)
+                }
                 if isRecording, let text, !text.isEmpty {
                     notch.showStreamingPartial(text)
                 }
@@ -815,7 +838,8 @@ final class DictationController {
 
     /// Env-gated self-test for the capture decision (mirrors CorrectionDetector.runSelfTest).
     /// Run with: `MURMUR_TEST_CAPTURE=1 open Murmur.app` and read the log for PASS/FAIL.
-    static func runCaptureSelfTest() {
+    @discardableResult
+    static func runCaptureSelfTest() -> Int {
         struct Case {
             let name: String; let samples: Int; let held: Duration?; let peak: Float
             var hasSpeech = true
@@ -859,6 +883,7 @@ final class DictationController {
         }
         print("[CaptureOutcome] \(passed)/\(cases.count) passed")
         fflush(stdout) // GUI launch block-buffers stdout; flush so the result is observable.
+        return cases.count - passed
     }
 
     private func deliver(_ text: String, original: String? = nil) {
@@ -898,12 +923,16 @@ final class DictationController {
 
         let deliverState = signposter.beginInterval("paste")
         if canInsert {
+            // Capture the target BEFORE pasting: the watcher must diff the field
+            // we wrote to, not whatever happens to be focused a third of a second
+            // later.
+            let target = accessibility.focusedElementForEditing()
             TextInserter.paste(text)
             notch.finish(message: "Inserted")
             // Watch the field for the user correcting a word, so we can learn it.
             FieldEditWatcher.diag("deliver: pasted, autoLearnFromEdits=\(preferences.autoLearnFromEdits)")
             if preferences.autoLearnFromEdits {
-                editWatcher.start(insertedText: text)
+                editWatcher.start(insertedText: text, pastedInto: target)
             }
         } else {
             FieldEditWatcher.diag("deliver: NOT inserted (canInsert=false) → copied, no watcher. trusted=\(trusted) secureInput=\(secureInput) editableFocused=\(editableFocused)")

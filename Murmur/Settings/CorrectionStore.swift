@@ -72,6 +72,11 @@ final class CorrectionStore {
     }
 
     private var exactRules: [ExactRule] = []
+    /// One alternation of every variant, longest first, plus the lookup from a
+    /// matched variant to its corrected spelling. Applying the rules through a
+    /// single pass is what stops them chaining into each other.
+    private var combinedRegex: NSRegularExpression?
+    private var correctedByVariant: [String: String] = [:]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -95,11 +100,31 @@ final class CorrectionStore {
             // and the string edges may. Handles digits/hyphens inside terms
             // ("GPT-4") and non-ASCII names ("Fernández") correctly.
             let escaped = NSRegularExpression.escapedPattern(for: pair.variant)
-            let pattern = "(?<![\\p{L}\\p{N}])" + escaped + "(?![\\p{L}\\p{N}])"
+            let pattern = Self.boundaryBefore + escaped + Self.boundaryAfter
             guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
             return ExactRule(regex: re, template: NSRegularExpression.escapedTemplate(for: pair.corrected))
         }
+
+        correctedByVariant = Dictionary(pairs.map { ($0.variant.lowercased(), $0.corrected) },
+                                        uniquingKeysWith: { first, _ in first })
+        let alternation = pairs
+            .map { NSRegularExpression.escapedPattern(for: $0.variant) }
+            .joined(separator: "|")
+        combinedRegex = alternation.isEmpty ? nil : try? NSRegularExpression(
+            pattern: Self.boundaryBefore + "(" + alternation + ")" + Self.boundaryAfter,
+            options: [.caseInsensitive])
     }
+
+    /// Unicode-aware word boundary via look-arounds (not `\b`). Letters, digits,
+    /// hyphens and apostrophes may not sit directly adjacent; whitespace, other
+    /// punctuation and the string edges may.
+    ///
+    /// Hyphen and apostrophe are in the set because they join words: without
+    /// them a rule `Anne → Ana` rewrote the middle of "Anne-Marie", `co → CO`
+    /// hit "co-founder", and `GPT-4 → GPT-5` rewrote inside "X-GPT-4-turbo".
+    private static let joiners = "\\p{L}\\p{N}\\-'\u{2019}"
+    private static let boundaryBefore = "(?<![" + joiners + "])"
+    private static let boundaryAfter = "(?![" + joiners + "])"
 
     // MARK: - Loading / migration
 
@@ -273,13 +298,32 @@ final class CorrectionStore {
     /// shorter overlap. Exact matches only — a token is rewritten solely when it
     /// literally equals a taught variant. Entirely in-memory; safe to call
     /// synchronously on the delivery path.
+    /// Apply every learned correction in ONE left-to-right pass.
+    ///
+    /// Running each rule over the whole string in sequence let one rule's output
+    /// be re-matched by the next: with `GPT-4 → GPT-5` and `GPT-5 → GPT-6`
+    /// stored, "we use GPT-4" came out as "we use GPT-6". A single pass reads
+    /// each character of the ORIGINAL once, so a replacement can never be
+    /// re-examined. The alternation is ordered longest-variant-first, so the
+    /// most specific rule wins where two could match at the same position.
     func apply(to text: String) -> String {
-        guard !text.isEmpty, !exactRules.isEmpty else { return text }
-        var result = text
-        for rule in exactRules {
-            let range = NSRange(result.startIndex..., in: result)
-            result = rule.regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: rule.template)
+        guard !text.isEmpty, let regex = combinedRegex else { return text }
+        let ns = text as NSString
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return text }
+
+        var result = ""
+        result.reserveCapacity(text.count)
+        var cursor = 0
+        for match in matches {
+            let range = match.range
+            guard range.location >= cursor else { continue }   // never overlap
+            result += ns.substring(with: NSRange(location: cursor, length: range.location - cursor))
+            let matched = ns.substring(with: range)
+            result += correctedByVariant[matched.lowercased()] ?? matched
+            cursor = range.location + range.length
         }
+        result += ns.substring(from: cursor)
         return result
     }
 
@@ -297,7 +341,8 @@ final class CorrectionStore {
     /// Correctness + performance checks for the exact-replace model. Triggered
     /// alongside the detector self-test via `MURMUR_TEST_CORRECTIONS`. Runs against
     /// a throwaway defaults suite so it never touches the user's real data.
-    static func runSelfTest() {
+    @discardableResult
+    static func runSelfTest() -> Int {
         let suiteName = "com.murmur.correctionstore.selftest"
         let suite = UserDefaults(suiteName: suiteName) ?? .standard
         suite.removePersistentDomain(forName: suiteName)
@@ -322,6 +367,28 @@ final class CorrectionStore {
             .init(input: "deploy on Versal please", expect: "deploy on Vercel please", note: "second term still works"),
             .init(input: "ship openai models", expect: "ship OpenAI models", note: "casing-only correction applies"),
         ]
+        // Chaining: one rule's OUTPUT must never be re-matched by another rule.
+        let chain = CorrectionStore(defaults: suite)
+        chain.setForTesting([term("GPT-5", ["GPT-4"]), term("GPT-6", ["GPT-5"])])
+        let chainCases: [Case] = [
+            .init(input: "we use GPT-4 daily", expect: "we use GPT-5 daily",
+                  note: "HEADLINE: A→B must not then run through B→C"),
+            .init(input: "we use GPT-5 daily", expect: "we use GPT-6 daily",
+                  note: "the second rule still applies on its own"),
+        ]
+        // Word joiners: a hyphen or apostrophe binds words together, so a rule
+        // must not rewrite the middle of a compound.
+        let joined = CorrectionStore(defaults: suite)
+        joined.setForTesting([term("Ana", ["Anne"]), term("CO", ["co"]), term("Whop", ["WAP"])])
+        let joinerCases: [Case] = [
+            .init(input: "Anne-Marie called", expect: "Anne-Marie called",
+                  note: "HEADLINE: hyphenated name is left alone"),
+            .init(input: "the co-founder agreed", expect: "the co-founder agreed",
+                  note: "HEADLINE: co-founder is not CO-founder"),
+            .init(input: "Anne called", expect: "Ana called", note: "standalone still corrects"),
+            .init(input: "WAP's dashboard", expect: "WAP's dashboard",
+                  note: "apostrophe binds too — possessive left alone"),
+        ]
         var passed = 0
         for c in cases {
             let got = store.apply(to: c.input)
@@ -329,7 +396,20 @@ final class CorrectionStore {
             if ok { passed += 1 }
             print("[CorrectionStore] \(ok ? "PASS" : "FAIL") [\(c.note)] “\(c.input)” → “\(got)” expect “\(c.expect)”")
         }
-        print("[CorrectionStore] \(passed)/\(cases.count) apply() cases passed")
+        for c in chainCases {
+            let got = chain.apply(to: c.input)
+            let ok = got == c.expect
+            if ok { passed += 1 }
+            print("[CorrectionStore] \(ok ? "PASS" : "FAIL") [\(c.note)] “\(c.input)” → “\(got)” expect “\(c.expect)”")
+        }
+        for c in joinerCases {
+            let got = joined.apply(to: c.input)
+            let ok = got == c.expect
+            if ok { passed += 1 }
+            print("[CorrectionStore] \(ok ? "PASS" : "FAIL") [\(c.note)] “\(c.input)” → “\(got)” expect “\(c.expect)”")
+        }
+        let applyTotal = cases.count + chainCases.count + joinerCases.count
+        print("[CorrectionStore] \(passed)/\(applyTotal) apply() cases passed")
 
         // --- learn(): mishearings accumulate, then revert protection ---
         let learnStore = CorrectionStore(defaults: suite)
@@ -356,7 +436,12 @@ final class CorrectionStore {
         let fast = ms < 250
         print("[CorrectionStore] \(fast ? "PASS" : "FAIL") perf: apply() on \(words.count) chars × \(many.count) rules took \(String(format: "%.1f", ms)) ms (budget 250 ms)")
 
+        let storeFailures = (applyTotal - passed)
+            + (folded ? 0 : 1) + (noInverse && variantGone ? 0 : 1) + (fast ? 0 : 1)
+        print("[CorrectionStore] \(storeFailures) failures")
+        fflush(stdout)
         suite.removePersistentDomain(forName: suiteName)
+        return storeFailures
     }
 }
 

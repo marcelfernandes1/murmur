@@ -16,8 +16,23 @@ actor ParakeetService: SpeechEngine {
         _ = try? await loadManager()
     }
 
+    /// True while the committed take is being decoded. Actors are reentrant
+    /// across `await`, so without this a streaming preview pass could enter the
+    /// actor mid-decode and use the shared AsrManager concurrently — the preview
+    /// is disposable, the final result is not.
+    private var decodingFinal = false
+
+    /// Preview pass for the live notch. Skipped outright if the real decode is
+    /// running; a dropped preview frame costs nothing.
+    func transcribePreview(_ samples: [Float], language: String?, vocabulary: [String]) async throws -> String {
+        guard !decodingFinal else { return "" }
+        return try await transcribe(samples, language: language, vocabulary: vocabulary)
+    }
+
     func transcribe(_ samples: [Float], language: String?, vocabulary: [String]) async throws -> String {
         guard !samples.isEmpty else { return "" }
+        decodingFinal = true
+        defer { decodingFinal = false }
         let manager = try await loadManager()
         var state = try TdtDecoderState()
         let result = try await manager.transcribe(samples, decoderState: &state)
