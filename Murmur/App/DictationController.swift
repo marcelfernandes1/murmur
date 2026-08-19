@@ -75,6 +75,15 @@ final class DictationController {
     /// Monotonic per-dictation tag so a late/stale transcribe result can't clobber a
     /// newer dictation's UI state.
     private var dictationGeneration = 0
+    /// Rate this dictation was captured at — the selected engine decides it
+    /// (local Whisper 16 kHz, OpenAI realtime 24 kHz), so nothing downstream may
+    /// assume 16 kHz any more.
+    private var captureSampleRate = 16_000
+    /// Pumps captured audio into a live (streaming) engine while recording.
+    private var livePumpTask: Task<Void, Never>?
+    private var liveEngine: (any LiveSpeechEngine)?
+    /// How much of the take the live pump has already sent.
+    private var liveSentSamples = 0
 
     /// Wall-clock trigger-down instant, used to tell an accidental tap (released
     /// almost immediately) from a real hold that happened to capture nothing.
@@ -129,6 +138,8 @@ final class DictationController {
         case .whisper: return WhisperService(modelName: choice.whisperKitName)
         case .parakeet: return ParakeetService()
         case .whisperCpp: return WhisperCppService(fileName: choice.ggmlFileName)
+        case .openAIFile: return OpenAIFileService()
+        case .openAIRealtime: return OpenAIRealtimeService()
         }
     }
 
@@ -194,6 +205,7 @@ final class DictationController {
         if ProcessInfo.processInfo.environment["MURMUR_TEST_COVERAGE"] != nil {
             DecodeCoverage.runSelfTest()
             TranscriptCleaner.runPromptEchoSelfTest()
+            AudioWAV.runSelfTest()
         }
         // Visual preview of the notch + hands-free bubble together (no recording),
         // for screenshotting the layout: `MURMUR_PREVIEW_CONTROLBAR=1 open Murmur.app`.
@@ -405,6 +417,12 @@ final class DictationController {
         controlBar.hide()
         streamTask?.cancel()
         streamTask = nil
+        livePumpTask?.cancel()
+        livePumpTask = nil
+        if let live = liveEngine {
+            liveEngine = nil
+            Task { await live.cancelLive() }
+        }
         transcribeTask?.cancel()
         transcribeWatchdog?.cancel()
         _ = recorder.stop(reason: .hotkeyCancelled)
@@ -433,6 +451,8 @@ final class DictationController {
         // Bind the engine for this whole dictation up front, so switching the model in
         // Settings mid-recording can't make the commit transcribe on an unloaded one.
         dictationEngine = engine
+        captureSampleRate = engine.inputSampleRate
+        recorder.targetSampleRate = captureSampleRate
         // A new dictation supersedes watching the previous field for edits.
         editWatcher.cancel()
         // Show the notch the INSTANT the trigger goes down, and (below) kick off capture
@@ -478,6 +498,30 @@ final class DictationController {
                 if preferences.streaming && streamingCapable {
                     startStreamingLoop()
                 }
+                // A streaming cloud engine transcribes WHILE the user talks, so
+                // releasing the trigger costs one commit round trip instead of a
+                // whole upload-and-decode. Start the session and begin pumping.
+                // Cloud engines: open the connection now, not after the user
+                // stops talking.
+                if let engine = dictationEngine { Task { await engine.warmUp() } }
+                if let live = dictationEngine as? any LiveSpeechEngine {
+                    liveEngine = live
+                    let language = preferences.language.code
+                    let vocab = biasVocabulary()
+                    // Show the words as the server produces them. This is the
+                    // whole point of the realtime engine — without it the
+                    // streaming happens entirely off-screen.
+                    let generation = dictationGeneration
+                    await live.setPartialHandler { [weak self] partial in
+                        Task { @MainActor in
+                            guard let self, self.isRecording,
+                                  self.dictationGeneration == generation else { return }
+                            self.notch.showStreamingPartial(partial)
+                        }
+                    }
+                    await live.beginLive(language: language, vocabulary: vocab)
+                    startLivePump(live)
+                }
                 // If the trigger was released during a slow start, the commit was
                 // deferred (see commitRecording) — run it now that capture is live.
                 if commitPending {
@@ -494,6 +538,29 @@ final class DictationController {
                 flagError(.error(error.localizedDescription), notch: error.localizedDescription)
             }
         }
+    }
+
+    /// Feed newly captured audio to a live engine as it arrives. Polls the
+    /// recorder's buffer rather than tapping the render callback — the audio
+    /// thread must not be doing base64 and WebSocket sends.
+    private func startLivePump(_ live: any LiveSpeechEngine) {
+        livePumpTask?.cancel()
+        liveSentSamples = 0
+        livePumpTask = Task { [weak self] in
+            while let self, self.isRecording, !Task.isCancelled {
+                await self.flushLiveAudio(to: live)
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
+    /// Send everything captured since the last flush. Also called once at commit
+    /// so the tail of the take is up before the turn is committed.
+    private func flushLiveAudio(to live: any LiveSpeechEngine) async {
+        let (chunk, total) = recorder.samples(from: liveSentSamples)
+        guard !chunk.isEmpty else { return }
+        liveSentSamples = total
+        await live.appendLive(chunk)
     }
 
     /// While recording, periodically transcribe the audio-so-far for a live
@@ -547,12 +614,12 @@ final class DictationController {
         let held = holdAtRelease ?? recordingStartedAt.map { recordingClock.now - $0 }
         holdAtRelease = nil
         recordingStartedAt = nil
-        let duration = Double(samples.count) / 16_000.0
+        let duration = Double(samples.count) / Double(captureSampleRate)
         let peak = recorder.peakAmplitude
         Self.audioLog.log("commitRecording: samples=\(samples.count, privacy: .public) duration=\(duration, privacy: .public)s peak=\(peak, privacy: .public)")
 
         // Decide what to do with the buffer (pure + unit-tested — see runCaptureSelfTest).
-        let hasSpeech = DecodeCoverage.containsSpeech(samples)
+        let hasSpeech = DecodeCoverage.containsSpeech(samples, sampleRate: captureSampleRate)
         switch Self.captureOutcome(sampleCount: samples.count, held: held, peak: peak, hasSpeech: hasSpeech) {
         case .accidentalTap:
             // A quick brush of the trigger that captured nothing — the user never
@@ -638,11 +705,29 @@ final class DictationController {
             do {
                 let transcribeState = signposter.beginInterval("transcribe")
                 let vocabulary = biasVocabulary()
-                var text = try await engine.transcribe(
-                    samples,
-                    language: preferences.language.code,
-                    vocabulary: vocabulary
-                )
+                let startedAt = ContinuousClock.now
+                var text: String
+                if let live = liveEngine {
+                    // Already transcribed while the user was talking; this just
+                    // sends the tail, commits the turn and collects the final
+                    // transcript. Cancel the pump rather than awaiting it — it is
+                    // mid-sleep, and waiting for it added up to a poll interval
+                    // of pure latency to every dictation.
+                    livePumpTask?.cancel()
+                    livePumpTask = nil
+                    await flushLiveAudio(to: live)
+                    text = try await live.finishLive()
+                    liveEngine = nil
+                } else {
+                    text = try await engine.transcribe(
+                        samples,
+                        language: preferences.language.code,
+                        vocabulary: vocabulary
+                    )
+                }
+                // Time-to-text, so the engines can actually be compared rather
+                // than guessed at.
+                Self.audioLog.log("engine=\(String(describing: type(of: engine)), privacy: .public) audio=\(duration, privacy: .public)s timeToText=\((ContinuousClock.now - startedAt).seconds, privacy: .public)s")
                 // Applied once, here, so it covers every engine (it used to run
                 // both here and inside WhisperCppService).
                 text = TranscriptCleaner.removeDegenerateRepeats(text)

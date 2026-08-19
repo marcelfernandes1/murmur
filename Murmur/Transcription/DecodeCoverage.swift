@@ -56,8 +56,9 @@ enum DecodeCoverage {
 
     /// Whether these samples contain anything worth transcribing. False means a
     /// silent take: decoding it would invent words, so the caller should not.
-    static func containsSpeech(_ samples: [Float]) -> Bool {
-        let levels = frameLevels(samples[samples.startIndex..<samples.endIndex])
+    static func containsSpeech(_ samples: [Float], sampleRate: Int = sampleRate) -> Bool {
+        let levels = frameLevels(samples[samples.startIndex..<samples.endIndex],
+                                 frame: max(1, sampleRate / 10))
         guard !levels.isEmpty else { return false }
         return speechSeconds(levels: levels, reference: noiseFloor(of: levels)) >= minSpeechSecondsInTake
     }
@@ -196,11 +197,11 @@ enum DecodeCoverage {
         return Int(min(max(0, seconds) * Double(sampleRate), Double(limit)))
     }
 
-    private static func frameLevels(_ slice: ArraySlice<Float>) -> [Float] {
+    private static func frameLevels(_ slice: ArraySlice<Float>, frame: Int = energyFrameSamples) -> [Float] {
         var levels: [Float] = []
         var index = slice.startIndex
         while index < slice.endIndex {
-            let end = min(index + energyFrameSamples, slice.endIndex)
+            let end = min(index + frame, slice.endIndex)
             var sumSquares: Float = 0
             for i in index..<end { sumSquares += slice[i] * slice[i] }
             levels.append((sumSquares / Float(end - index)).squareRoot())

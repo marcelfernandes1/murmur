@@ -124,12 +124,27 @@ final class AudioRecorder: @unchecked Sendable {
     /// Largest absolute sample amplitude seen since the last `start()`.
     private(set) var peakAmplitude: Float = 0
 
-    private let targetFormat = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32,
-        sampleRate: 16_000,
-        channels: 1,
-        interleaved: false
-    )!
+    /// Rate the captured audio is converted to. Set before `start()`; the
+    /// selected engine decides it (local Whisper wants 16 kHz, OpenAI realtime
+    /// wants 24 kHz). Changing it mid-capture is not supported and is ignored.
+    var targetSampleRate: Int = 16_000 {
+        didSet {
+            guard targetSampleRate != oldValue else { return }
+            lifecycleQueue.async { [weak self] in
+                guard let self, !self.capturing else { return }
+                self.targetFormat = Self.makeFormat(rate: self.targetSampleRate)
+            }
+        }
+    }
+
+    private static func makeFormat(rate: Int) -> AVAudioFormat {
+        AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                      sampleRate: Double(rate),
+                      channels: 1,
+                      interleaved: false)!
+    }
+
+    private var targetFormat = makeFormat(rate: 16_000)
 
     init() {}
 
@@ -153,6 +168,21 @@ final class AudioRecorder: @unchecked Sendable {
     /// A snapshot of audio captured so far, without stopping (used for streaming).
     func currentSamples() -> [Float] {
         snapshot()
+    }
+
+    /// Only the samples captured since `index`, plus the new total count.
+    ///
+    /// The streaming pumps used to call `currentSamples()` several times a
+    /// second, which copies the WHOLE take every time — O(n²) over a dictation,
+    /// and it leaves a second reference alive so the next append on the audio
+    /// render thread has to deep-copy the entire buffer. This copies only the
+    /// new tail and never outlives the lock.
+    func samples(from index: Int) -> (samples: [Float], total: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        let total = samples.count
+        guard index < total else { return ([], total) }
+        return (Array(samples[max(0, index)..<total]), total)
     }
 
     /// Stops capture and returns everything recorded so far. `reason` is logged so a

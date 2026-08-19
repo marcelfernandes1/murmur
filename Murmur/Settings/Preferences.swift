@@ -36,15 +36,27 @@ final class Preferences {
         case cppLargeV3TurboQ5 = "ggml-large-v3-turbo-q5_0"
         case cppLargeV3TurboQ8 = "ggml-large-v3-turbo-q8_0"
 
-        enum Engine { case whisper, parakeet, whisperCpp }
+        // OpenAI cloud transcription. Opt-in, never the default: unlike every
+        // other engine here these send the recording off the machine, and they
+        // need an API key the user pastes in themselves.
+        case openAIFile = "openai-gpt-transcribe"
+        case openAIRealtime = "openai-gpt-live-transcribe"
+
+        enum Engine { case whisper, parakeet, whisperCpp, openAIFile, openAIRealtime }
 
         var id: String { rawValue }
 
         var engine: Engine {
-            if self == .parakeet { return .parakeet }
-            if rawValue.hasPrefix("ggml-") { return .whisperCpp }
-            return .whisper
+            switch self {
+            case .parakeet: return .parakeet
+            case .openAIFile: return .openAIFile
+            case .openAIRealtime: return .openAIRealtime
+            default: return rawValue.hasPrefix("ggml-") ? .whisperCpp : .whisper
+            }
         }
+
+        /// True for engines that upload the user's speech.
+        var isCloud: Bool { engine == .openAIFile || engine == .openAIRealtime }
 
         /// WhisperKit model name (only meaningful for the `.whisper` engine).
         var whisperKitName: String { rawValue }
@@ -54,6 +66,8 @@ final class Preferences {
 
         var displayName: String {
             switch self {
+            case .openAIFile: return "OpenAI gpt-transcribe — cloud, most accurate (needs API key)"
+            case .openAIRealtime: return "OpenAI gpt-live-transcribe — cloud, streams while you talk (needs API key)"
             case .parakeet: return "Parakeet TDT 0.6B v3 — fastest, multilingual (~600 MB)"
             case .base: return "Whisper Base (Core ML) — fast (~145 MB)"
             case .small: return "Whisper Small (Core ML) — balanced, multilingual (~480 MB)"
