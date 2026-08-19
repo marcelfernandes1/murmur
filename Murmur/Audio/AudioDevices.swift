@@ -57,20 +57,6 @@ enum AudioDevices {
         return deviceID
     }
 
-    /// The system's current default output device (for diagnostics).
-    static func defaultOutputDeviceID() -> AudioDeviceID? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-
-        var deviceID = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let system = AudioObjectID(kAudioObjectSystemObject)
-        guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &deviceID) == noErr,
-              deviceID != AudioObjectID(kAudioObjectUnknown) else { return nil }
-        return deviceID
-    }
 
     /// Whether a device is currently running any IO (alive/active).
     static func isRunningSomewhere(_ id: AudioDeviceID) -> Bool {

@@ -80,6 +80,11 @@ final class DictationController {
     /// almost immediately) from a real hold that happened to capture nothing.
     private let recordingClock = ContinuousClock()
     private var recordingStartedAt: ContinuousClock.Instant?
+    /// How long the trigger was actually held, sampled at RELEASE. On the
+    /// deferred-commit path the commit runs when capture finally goes live, so
+    /// measuring at commit time reported press→live instead and classified a
+    /// 200 ms brush as a real hold that captured nothing ("No audio captured").
+    private var holdAtRelease: Duration?
 
     /// Hold the trigger for less than this and capture no audio ⇒ treat it as an
     /// accidental tap, not a failure — so a stray brush never flashes a warning
@@ -166,9 +171,12 @@ final class DictationController {
         // callback cadence so scroll speed is identical across mics/buffer sizes.
         notch.levelProvider = { [weak recorder] in recorder?.drainLevel() }
         recorder.preferredDeviceUID = preferences.inputDeviceUID
-        // Let the recorder's config-change diagnostics report whether the trigger is
-        // believed held (thread-safe snapshot; no MainActor hop from the audio queue).
-        recorder.hotkeyHeldProvider = { [heldState = hotkeys.heldState] in heldState.get() }
+        // Capture dying mid-take (device unplugged, failed device switch) used to
+        // be invisible: the notch kept saying "listening" while nothing was being
+        // recorded. Surface it and finalize what we already have.
+        recorder.onCaptureFailed = { [weak self] error in
+            Task { @MainActor in self?.handleCaptureFailure(error) }
+        }
 
         editWatcher.onCorrection = { [weak self] candidate in
             self?.learn(candidate)
@@ -413,6 +421,7 @@ final class DictationController {
         captureLive = false
         commitPending = false
         recordingStartedAt = recordingClock.now
+        holdAtRelease = nil
         errorClearTask?.cancel()
         // Defensive cleanup of any prior transcribe task/watchdog. handleTriggerDown now
         // refuses to start a new dictation while one is still transcribing (awaitingResult),
@@ -520,6 +529,9 @@ final class DictationController {
         // we never stop and transcribe an empty buffer (the lost-first-capture bug).
         if !captureLive {
             commitPending = true
+            if holdAtRelease == nil, let started = recordingStartedAt {
+                holdAtRelease = recordingClock.now - started
+            }
             return
         }
         isRecording = false
@@ -532,7 +544,8 @@ final class DictationController {
         streamTask = nil
 
         let samples = recorder.stop(reason: .hotkeyReleased)
-        let held = recordingStartedAt.map { recordingClock.now - $0 }
+        let held = holdAtRelease ?? recordingStartedAt.map { recordingClock.now - $0 }
+        holdAtRelease = nil
         recordingStartedAt = nil
         let duration = Double(samples.count) / 16_000.0
         let peak = recorder.peakAmplitude
@@ -596,10 +609,22 @@ final class DictationController {
         // far larger than any real run — so it never cuts a valid transcription, only
         // breaks a true never-returns hang. Without this, ignoring the re-press above
         // would leave a wedged dictation stuck on "Transcribing…" until app restart.
+        // Only time spent actually transcribing counts. The same call can be
+        // blocked on a first-run multi-gigabyte model download, which the UI
+        // shows a progress notch for — scaling the deadline off the audio length
+        // meant a 3 s dictation was aborted 30 s into a 1.5 GB download, and the
+        // result was discarded even once the download finished.
         let watchdogDeadline = max(30.0, duration * 6.0)
         transcribeWatchdog?.cancel()
         transcribeWatchdog = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(watchdogDeadline))
+            var transcribing = 0.0
+            let tick = 1.0
+            while transcribing < watchdogDeadline {
+                try? await Task.sleep(for: .seconds(tick))
+                guard !Task.isCancelled, let self else { return }
+                guard self.awaitingResult, self.dictationGeneration == generation else { return }
+                if self.appState.modelPhase == .ready { transcribing += tick }
+            }
             guard !Task.isCancelled, let self else { return }
             guard self.awaitingResult, self.dictationGeneration == generation else { return }
             self.transcribeTask?.cancel()
@@ -618,6 +643,8 @@ final class DictationController {
                     language: preferences.language.code,
                     vocabulary: vocabulary
                 )
+                // Applied once, here, so it covers every engine (it used to run
+                // both here and inside WhisperCppService).
                 text = TranscriptCleaner.removeDegenerateRepeats(text)
                 // Both whisper engines bias recognition by feeding the vocabulary
                 // in as an initial prompt, and both will happily transcribe that
@@ -666,6 +693,23 @@ final class DictationController {
                 awaitingResult = false
                 transcribeWatchdog?.cancel()
             }
+        }
+    }
+
+    /// Capture died mid-take. Commit what was recorded up to that point rather
+    /// than letting the user keep talking into a dead microphone.
+    private func handleCaptureFailure(_ error: Error) {
+        guard isRecording else { return }
+        Self.audioLog.error("capture failed mid-take: \(error.localizedDescription, privacy: .public) — finalizing what was captured")
+        if captureLive {
+            commitRecording()
+        } else {
+            isRecording = false
+            isLocked = false
+            commitPending = false
+            spaceLock.stop()
+            controlBar.hide()
+            flagError(.error(error.localizedDescription), notch: error.localizedDescription)
         }
     }
 
@@ -753,6 +797,18 @@ final class DictationController {
             // what actually had focus, so a report of "it just says Copied" is
             // answerable from the log instead of guesswork.
             Self.audioLog.warning("delivery fell back to clipboard: trusted=\(trusted, privacy: .public) secureInput=\(secureInput, privacy: .public) editableFieldFocused=\(editableFocused, privacy: .public) \(self.accessibility.focusDiagnostics(), privacy: .public)")
+        }
+
+        if secureInput {
+            // Secure input means a password field is focused. We already refuse to
+            // type there — but the clipboard fallback used to park the passphrase
+            // on the general pasteboard (readable by every app, captured by
+            // clipboard managers, synced to iPhone) and commit it to history as
+            // plaintext. Deliver nothing instead, and say why.
+            Self.audioLog.warning("secure input active — dictation discarded rather than sent to the clipboard")
+            flagError(.error("Secure field — not inserted"),
+                      notch: "Password field — dictation discarded")
+            return
         }
 
         let deliverState = signposter.beginInterval("paste")

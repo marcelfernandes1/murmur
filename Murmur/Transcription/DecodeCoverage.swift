@@ -26,29 +26,49 @@ enum DecodeCoverage {
     // trigger pasted "VTURB, Whop, Fernandes". whisper's own `no_speech_prob`
     // does not catch this: it reports 0.00 on pure silence, measured.
     //
-    // Level alone can't decide it either — a quiet dictation and room tone can
-    // sit at the same amplitude. What separates them is *shape*: speech is
-    // modulated (syllables, stops, gaps between words) so its loud frames tower
-    // over its quiet ones, while room tone is flat. Measured over 100 ms frames:
-    // room tone p90/p10 = 1.0; speech = 8.1 even at a peak of 0.03, and higher
-    // at normal levels. Suppression needs BOTH a flat shape and a low level, so
-    // speech recorded into a noisy room (flat-ish, but loud) is never written
-    // off.
+    // Level alone can't decide it — a quiet dictation and room tone can sit at
+    // the same amplitude. What separates them is that speech *stands out from
+    // the take's own noise floor*: it is modulated, and its loud frames tower
+    // over the quiet ones. Room tone is flat, so nothing towers over anything.
+    //
+    // The test is deliberately "is there speech ANYWHERE", not "is this take
+    // mostly speech". An earlier version compared the 90th percentile against
+    // the 10th, which measured the *duty cycle* instead: a hands-free take where
+    // the user said one sentence and then read quietly for three minutes put the
+    // 90th percentile down in the room tone and the whole dictation was thrown
+    // away with no paste, no history and no error. Speech occupying a small
+    // fraction of a long recording is the normal case for hands-free, not a
+    // silent take.
 
-    /// Below this ratio of loud frames to quiet frames, audio looks unmodulated.
-    static let minSpeechDynamicRange: Float = 3.0
-    /// …and only that flat audio this quiet counts as no speech at all.
-    static let maxSilenceLevel: Float = 0.01
+    /// A frame must stand this far above the take's noise floor to be speech.
+    static let speechFloorMultiple: Float = 3.0
+    /// …and clear this absolute level, so digital silence (where the floor is
+    /// zero) can never qualify.
+    static let minSpeechLevel: Float = 0.004
+    /// A frame this loud is speech whatever the floor says. Needed because the
+    /// ratio test alone fails on a loud noise floor — speech recorded next to a
+    /// fan does not tower over the fan — while room tone never reaches this
+    /// level (the loudest silent take observed in the field framed at 0.005).
+    static let absoluteSpeechLevel: Float = 0.02
+    /// Total speech needed anywhere in the take for it to be worth decoding.
+    /// Shorter than the briefest real one-word dictation.
+    static let minSpeechSecondsInTake = 0.2
 
     /// Whether these samples contain anything worth transcribing. False means a
     /// silent take: decoding it would invent words, so the caller should not.
     static func containsSpeech(_ samples: [Float]) -> Bool {
-        let levels = frameLevels(samples[samples.startIndex..<samples.endIndex]).sorted()
+        let levels = frameLevels(samples[samples.startIndex..<samples.endIndex])
         guard !levels.isEmpty else { return false }
-        let p10 = levels[min(levels.count - 1, Int(Double(levels.count) * 0.1))]
-        let p90 = levels[min(levels.count - 1, Int(Double(levels.count) * 0.9))]
-        let dynamicRange = p90 / max(p10, 1e-6)
-        return dynamicRange >= minSpeechDynamicRange || p90 >= maxSilenceLevel
+        return speechSeconds(levels: levels, reference: noiseFloor(of: levels)) >= minSpeechSecondsInTake
+    }
+
+    /// The take's noise floor, as the 10th-percentile frame level. A low
+    /// percentile so it tracks the quiet background even when most of the
+    /// recording is speech.
+    static func noiseFloor(of levels: [Float]) -> Float {
+        guard !levels.isEmpty else { return 0 }
+        let sorted = levels.sorted()
+        return sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.1))]
     }
 
     /// Ignore uncovered stretches shorter than this — ordinary gaps between
@@ -68,9 +88,13 @@ enum DecodeCoverage {
 
     /// The first uncovered stretch long enough — and loud enough — to be worth
     /// decoding again, or nil when the decode covered everything audible.
+    /// `excluding` holds the start offsets of gaps already attempted, so a gap
+    /// that could not be recovered is skipped rather than blocking every later
+    /// one (an early unrecoverable gap used to abort recovery for the whole take).
     static func firstRecoverableGap(in segments: [WhisperSegment],
                                     samples: [Float],
-                                    reference: Float) -> Gap? {
+                                    reference: Float,
+                                    excluding: Set<Int> = []) -> Gap? {
         let sampleCount = samples.count
         let minGap = Int(minGapSeconds * Double(sampleRate))
         var cursor = 0
@@ -83,7 +107,7 @@ enum DecodeCoverage {
         }
         if cursor < sampleCount { gaps.append(Gap(start: cursor, end: sampleCount)) }
 
-        for gap in gaps where gap.end - gap.start >= minGap {
+        for gap in gaps where gap.end - gap.start >= minGap && !excluding.contains(gap.start) {
             if speechSeconds(samples[gap.start..<gap.end], reference: reference) >= minGapSpeechSeconds {
                 return gap
             }
@@ -106,8 +130,11 @@ enum DecodeCoverage {
     /// A trailing segment is only ever dropped if it holds less speech than this.
     static let maxFabricatedTailSpeechSeconds = 0.15
     /// …and is short. Real invented closings are; the cap bounds what a bad
-    /// timestamp could cost to a few words rather than a sentence.
+    /// timestamp could cost to a few words rather than a sentence. Measured in
+    /// characters as well as words, because whitespace-splitting counts a whole
+    /// Chinese/Japanese/Korean sentence as one "word" and would bound nothing.
     static let maxFabricatedTailWords = 10
+    static let maxFabricatedTailCharacters = 60
 
     /// Drop trailing segments that sit on silence — whisper talking to itself
     /// after the speaker stopped. Stops at the first segment with speech under
@@ -116,38 +143,57 @@ enum DecodeCoverage {
                                        samples: [Float],
                                        reference: Float) -> [WhisperSegment] {
         var result = segments.sorted { $0.start < $1.start }
-        while let last = result.last {
+        // Never trim the take down to nothing. If every segment looks fabricated
+        // the timestamps are not trustworthy, and delivering whisper's best guess
+        // beats delivering an empty transcript the user is never told about.
+        while result.count > 1, let last = result.last {
             let start = clampToSamples(last.start, limit: samples.count)
             let end = clampToSamples(last.end, limit: samples.count)
             // Can't judge a segment with no measurable span — leave it alone.
             guard end > start else { break }
-            guard last.text.split(whereSeparator: \.isWhitespace).count <= maxFabricatedTailWords else { break }
+            guard last.text.split(whereSeparator: \.isWhitespace).count <= maxFabricatedTailWords,
+                  last.text.count <= maxFabricatedTailCharacters else { break }
             guard speechSeconds(samples[start..<end], reference: reference) < maxFabricatedTailSpeechSeconds else { break }
             result.removeLast()
         }
         return result
     }
 
-    /// How loud this take's speech is, as the 90th-percentile frame level. Used
-    /// as the yardstick for the gap check so a quietly-recorded dictation isn't
-    /// written off as silence, and a noisy one doesn't count its noise as speech.
+    /// The yardstick the gap and tail checks measure against: this take's noise
+    /// floor. Computed once per take and passed down, so a quietly-recorded
+    /// dictation isn't written off and a noisy one doesn't count its hiss as
+    /// speech.
     static func speechReferenceLevel(_ samples: [Float]) -> Float {
-        let levels = frameLevels(samples[samples.startIndex..<samples.endIndex]).sorted()
-        guard !levels.isEmpty else { return 0 }
-        return levels[min(levels.count - 1, Int(Double(levels.count) * 0.9))]
+        noiseFloor(of: frameLevels(samples[samples.startIndex..<samples.endIndex]))
     }
 
     /// Seconds of speech-level audio inside `slice`.
     static func speechSeconds(_ slice: ArraySlice<Float>, reference: Float) -> Double {
-        // 15% of the take's speech level, with an absolute floor so digital
-        // silence (or a dead-mic hiss) can never clear the bar.
-        let threshold = max(reference * 0.15, 0.002)
-        let loud = frameLevels(slice).filter { $0 > threshold }.count
+        speechSeconds(levels: frameLevels(slice), reference: reference)
+    }
+
+    /// Speech must clear both bars: well above this take's own noise floor, and
+    /// above an absolute level so a silent take (floor ≈ 0) can't qualify by
+    /// ratio alone.
+    static func speechSeconds(levels: [Float], reference: Float) -> Double {
+        let threshold = min(max(reference * speechFloorMultiple, minSpeechLevel), absoluteSpeechLevel)
+        var loud = 0
+        for level in levels where level > threshold { loud += 1 }
         return Double(loud) * Double(energyFrameSamples) / Double(sampleRate)
     }
 
+    /// Clamp BEFORE converting: `Int(Double)` traps on NaN, infinity, or
+    /// anything beyond Int64, and whisper timestamps are unvalidated C int64s
+    /// that degenerate decoding can make wild. Clamping the Int afterwards, as
+    /// this used to, cannot prevent the trap.
+    /// Public clamp for callers working in a slice's own coordinate space.
+    static func clamp(_ seconds: Double, within limit: Int) -> Int {
+        clampToSamples(seconds, limit: limit)
+    }
+
     private static func clampToSamples(_ seconds: Double, limit: Int) -> Int {
-        min(max(0, Int(seconds * Double(sampleRate))), limit)
+        guard seconds.isFinite else { return 0 }
+        return Int(min(max(0, seconds) * Double(sampleRate), Double(limit)))
     }
 
     private static func frameLevels(_ slice: ArraySlice<Float>) -> [Float] {

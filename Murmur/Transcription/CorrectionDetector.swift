@@ -72,8 +72,13 @@ enum CorrectionDetector {
         let letters = word.filter { $0.isLetter }
         guard !letters.isEmpty else { return false }          // pure number/punctuation: skip
 
-        // ALL-CAPS acronym (API, NDA, SQL).
-        if word == word.uppercased() && word != word.lowercased() && letters.count >= 2 { return true }
+        // ALL-CAPS acronym (API, NDA, SQL) — but not a short everyday word the
+        // user merely capitalised. Learning "us → US" from one edit turned every
+        // later "us" into "US" (and "it → IT", "no → NO", "so → SO") across every
+        // dictation, permanently and silently.
+        if word == word.uppercased() && word != word.lowercased() && letters.count >= 2 {
+            return !Self.commonShortWords.contains(word.lowercased())
+        }
         // Mixed letters + digits jargon (GPT4, H100, v3).
         if word.contains(where: \.isNumber) && word.contains(where: \.isLetter) { return true }
         // CamelCase / internal capital (OpenAI, McKinsey, iPhone).
@@ -83,6 +88,17 @@ enum CorrectionDetector {
            word.dropFirst().contains(where: \.isLowercase) { return true }
         return false
     }
+
+    /// Everyday words that are also valid acronyms. Capitalising one of these is
+    /// almost always a one-off (the country, an initialism in that sentence), not
+    /// a spelling the user wants applied to every future dictation.
+    private static let commonShortWords: Set<String> = [
+        "us", "it", "no", "so", "am", "in", "on", "at", "to", "is", "as", "be",
+        "he", "we", "me", "my", "do", "go", "up", "an", "or", "if", "of", "by",
+        "id", "ok", "hi", "all", "and", "but", "can", "for", "the", "was", "you",
+        "are", "has", "had", "her", "him", "his", "how", "its", "let", "not",
+        "now", "one", "our", "out", "see", "she", "two", "who", "why", "yes",
+    ]
 
     private static func hasInternalUppercase(_ word: String) -> Bool {
         let chars = Array(word)

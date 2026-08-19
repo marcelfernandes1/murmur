@@ -14,6 +14,23 @@ final class AccessibilityManager {
     /// paste is blocked in that state, so we fall back to clipboard-only.
     var isSecureInputActive: Bool { IsSecureEventInputEnabled() }
 
+    init() {
+        terminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            let pid = app.processIdentifier
+            MainActor.assumeIsolated { self?.appsAskedForAccessibility.remove(pid) }
+        }
+    }
+
+    deinit {
+        if let terminationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(terminationObserver)
+        }
+    }
+
     /// Shows the system Accessibility prompt if not yet trusted.
     @discardableResult
     func promptForTrust() -> Bool {
@@ -33,6 +50,17 @@ final class AccessibilityManager {
     func isEditableFieldFocused() -> Bool {
         guard isTrusted, let element = focusedElement() else { return false }
 
+        // Settability, when the element answers the question at all. Many apps
+        // don't implement it, so an unanswered query is treated as "maybe" and
+        // the role decides — but a definite "no" is believed. Without this a
+        // read-only text field (a disabled input, an API-key display) matched on
+        // role alone, Cmd+V went nowhere, the notch said "Inserted", and the
+        // restore timer then wiped the transcript off the clipboard too.
+        var settable: DarwinBoolean = false
+        let settableStatus = AXUIElementIsAttributeSettable(
+            element, kAXValueAttribute as CFString, &settable)
+        if settableStatus == .success, !settable.boolValue { return false }
+
         var roleRef: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
         if let role = roleRef as? String, Self.editableRoles.contains(role) {
@@ -41,9 +69,7 @@ final class AccessibilityManager {
 
         // Web text areas / contenteditable expose a settable value attribute even
         // when the role is generic.
-        var settable: DarwinBoolean = false
-        AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable)
-        return settable.boolValue
+        return settableStatus == .success && settable.boolValue
     }
 
     /// The focused element, asking the frontmost application directly when the
@@ -85,8 +111,13 @@ final class AccessibilityManager {
     }
 
     /// Apps already asked to build their accessibility tree. Asking is cheap but
-    /// not free (the app constructs the tree), so it's done once per process.
+    /// not free (the app constructs the tree), so it's done once per process —
+    /// and forgotten when that process dies. macOS reuses pids, so a set that
+    /// only ever grew would eventually skip priming a NEW app that inherited a
+    /// retired pid, silently reinstating the "Copied instead of pasted" bug for
+    /// it until Murmur restarted.
     private var appsAskedForAccessibility: Set<pid_t> = []
+    private var terminationObserver: NSObjectProtocol?
     private static let manualAccessibility = "AXManualAccessibility" as CFString
 
     private static func copyFocusedElement(of root: AXUIElement) -> AXUIElement? {

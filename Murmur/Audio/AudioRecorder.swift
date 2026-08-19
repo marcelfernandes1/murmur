@@ -31,12 +31,7 @@ import OSLog
 enum StopReason: String {
     case hotkeyReleased          // genuine trigger key-up
     case hotkeyCancelled         // start was superseded/cancelled before listening
-    case engineStopped           // the capture unit died and could not recover
-    case configurationChange     // an audio configuration change
-    case silenceTimeout          // auto-stop on prolonged silence
-    case appDeactivated          // app lost focus / is shutting down
-    case explicitUserAction      // user pressed a stop/cancel control
-    case errorRecovery           // tearing down as part of error handling
+    case captureFailed           // the capture unit died and could not recover
 }
 
 /// `@unchecked Sendable`: every piece of mutable capture state is confined to
@@ -58,7 +53,11 @@ final class AudioRecorder: @unchecked Sendable {
 
     /// Best-effort, thread-safe query of whether the trigger key is believed held,
     /// for diagnostics. Set by the controller.
-    var hotkeyHeldProvider: (@Sendable () -> Bool)?
+    /// Called (off the main actor) when capture dies mid-take and cannot be
+    /// recovered — a device unplugged, or a failed mid-capture device switch.
+    /// Without this the controller kept showing "listening" while every further
+    /// word went nowhere.
+    var onCaptureFailed: (@Sendable (Error) -> Void)?
 
     /// UID of the input device to record from, or nil to follow the system default.
     /// Changing it while idle merely selects the device for the next `start()`.
@@ -73,7 +72,7 @@ final class AudioRecorder: @unchecked Sendable {
                 self.diag("device preference changed → \(newValue ?? "System Default")")
                 if self.capturing {
                     self.diag("device changed during capture → atomic restart on new device, preserving \(self.snapshotCount()) samples")
-                    self.launchCaptureLocked(resetSamplesFirst: false) { _ in }
+                    self.launchCaptureLocked(resetSamplesFirst: false)
                 }
             }
         }
@@ -101,6 +100,12 @@ final class AudioRecorder: @unchecked Sendable {
     private var monoInputFormat: AVAudioFormat?
     /// True between a successful `start()` and the matching `stop()`.
     private var capturing = false
+    /// The continuation for the in-flight `start()`. Held here rather than passed
+    /// down the launch chain so that a superseded attempt (a mid-start device
+    /// change) hands it to the new attempt instead of dropping it. Dropping it
+    /// leaked the continuation: `start()` never returned, `isRecording` stayed
+    /// true, and the trigger was dead until the app restarted.
+    private var pendingStart: ((Result<Void, Error>) -> Void)?
     private var currentDeviceUID: String?
 
     // MARK: Audio-thread / cross-thread state (guarded by `lock`)
@@ -160,6 +165,9 @@ final class AudioRecorder: @unchecked Sendable {
             diag("stop requested reason=\(reason.rawValue) gen=\(captureGeneration) (capturing=\(capturing) renderCallbacks=\(rc?.renderCallbackCount ?? 0) renderedFrames=\(rc?.renderedFrameCount ?? 0) droppedOversize=\(rc?.droppedOversizeSlices ?? 0) bufferCallbacks=\(cb) totalInputFrames=\(frames) peak=\(peakAmplitude) samples=\(snapshotCount()))")
             capturing = false
             captureGeneration &+= 1   // invalidate any in-flight settle hop
+            // A start still waiting (e.g. Esc during the Bluetooth settle poll)
+            // must be resolved here or its continuation leaks.
+            resolveStart(.failure(RecorderError.noInput))
             teardownUnitLocked()
         }
         return snapshot()
@@ -169,15 +177,25 @@ final class AudioRecorder: @unchecked Sendable {
 
     private func startLocked(completion: @escaping (Result<Void, Error>) -> Void) {
         diag("start requested (capturing was \(capturing))")
+        // A previous attempt should never still be waiting, but if it is, fail it
+        // rather than stranding it.
+        resolveStart(.failure(RecorderError.noInput))
+        pendingStart = completion
         capturing = true
-        launchCaptureLocked(resetSamplesFirst: true, completion: completion)
+        launchCaptureLocked(resetSamplesFirst: true)
+    }
+
+    /// Resolve the in-flight `start()` exactly once, if one is waiting.
+    private func resolveStart(_ result: Result<Void, Error>) {
+        guard let pending = pendingStart else { return }
+        pendingStart = nil
+        pending(result)
     }
 
     /// Open and start an AUHAL capture unit on the currently-resolved device.
     /// Used both for a fresh start (`resetSamplesFirst: true`) and for an atomic
     /// mid-capture device switch (`resetSamplesFirst: false`, samples preserved).
-    private func launchCaptureLocked(resetSamplesFirst: Bool,
-                                     completion: @escaping (Result<Void, Error>) -> Void) {
+    private func launchCaptureLocked(resetSamplesFirst: Bool) {
         captureGeneration &+= 1
         let generation = captureGeneration
         if resetSamplesFirst { resetSamples() }
@@ -188,7 +206,7 @@ final class AudioRecorder: @unchecked Sendable {
         guard let deviceID = resolvedDeviceIDLocked() else {
             diag("no input device available → noInput")
             capturing = false
-            completion(.failure(RecorderError.noInput))
+            resolveStart(.failure(RecorderError.noInput))
             return
         }
         let isBT = AudioDevices.isBluetooth(deviceID)
@@ -207,8 +225,13 @@ final class AudioRecorder: @unchecked Sendable {
             try unit.open(deviceID: deviceID)
         } catch {
             diag("open failed: \(error.localizedDescription)")
-            if resetSamplesFirst { capturing = false }
-            completion(.failure(error))
+            // A mid-capture device switch that fails leaves us with no unit. Say
+            // so instead of pretending capture is still running: `capturing` used
+            // to stay true here, so the notch kept showing "listening" while
+            // every further word went nowhere.
+            capturing = false
+            resolveStart(.failure(error))
+            onCaptureFailed?(error)
             return
         }
         captureUnit = unit
@@ -216,9 +239,9 @@ final class AudioRecorder: @unchecked Sendable {
         if isBT {
             diag("Bluetooth input → polling unit input format until it settles (gen=\(generation))")
             let deadline = DispatchTime.now() + Self.stabilizeTimeout
-            settleThenStart(generation: generation, lastRate: nil, streak: 0, deadline: deadline, completion: completion)
+            settleThenStart(generation: generation, lastRate: nil, streak: 0, deadline: deadline)
         } else {
-            finishStartLocked(generation: generation, completion: completion)
+            finishStartLocked(generation: generation)
         }
     }
 
@@ -229,9 +252,12 @@ final class AudioRecorder: @unchecked Sendable {
     private func settleThenStart(generation: Int,
                                  lastRate: Double?,
                                  streak: Int,
-                                 deadline: DispatchTime,
-                                 completion: @escaping (Result<Void, Error>) -> Void) {
+                                 deadline: DispatchTime) {
         guard capturing, generation == captureGeneration, let unit = captureUnit else {
+            // Superseded (a newer attempt owns `pendingStart` and will resolve it)
+            // or stopped (`stop()` resolves it). Either way this hop just exits —
+            // but `pendingStart` is never simply dropped, which is what used to
+            // wedge the app here.
             diag("settle aborted (capturing=\(capturing) gen=\(generation) current=\(captureGeneration))")
             return
         }
@@ -245,35 +271,36 @@ final class AudioRecorder: @unchecked Sendable {
             let newStreak = (lastRate == rate) ? streak + 1 : 1
             if newStreak >= Self.stabilizeReadingsNeeded {
                 diag("format settled at \(rate) Hz, \(channels) ch")
-                finishStartLocked(generation: generation, completion: completion)
+                finishStartLocked(generation: generation)
                 return
             }
             if DispatchTime.now() >= deadline {
                 diag("format settle TIMED OUT at \(rate) Hz, \(channels) ch → proceeding")
-                finishStartLocked(generation: generation, completion: completion)
+                finishStartLocked(generation: generation)
                 return
             }
             lifecycleQueue.asyncAfter(deadline: .now() + Self.stabilizePollInterval) { [weak self] in
-                self?.settleThenStart(generation: generation, lastRate: rate, streak: newStreak, deadline: deadline, completion: completion)
+                self?.settleThenStart(generation: generation, lastRate: rate, streak: newStreak, deadline: deadline)
             }
             return
         }
 
         if DispatchTime.now() >= deadline {
             diag("format settle TIMED OUT (still no valid format) → proceeding anyway")
-            finishStartLocked(generation: generation, completion: completion)
+            finishStartLocked(generation: generation)
             return
         }
         lifecycleQueue.asyncAfter(deadline: .now() + Self.stabilizePollInterval) { [weak self] in
-            self?.settleThenStart(generation: generation, lastRate: nil, streak: 0, deadline: deadline, completion: completion)
+            self?.settleThenStart(generation: generation, lastRate: nil, streak: 0, deadline: deadline)
         }
     }
 
-    private func finishStartLocked(generation: Int,
-                                   completion: @escaping (Result<Void, Error>) -> Void) {
+    private func finishStartLocked(generation: Int) {
         guard capturing, generation == captureGeneration, let unit = captureUnit else {
+            // Superseded or stopped — whoever did that owns the resolution.
+            // Reporting success here would tell the controller capture is live
+            // when it is not.
             diag("finishStart aborted (capturing=\(capturing) gen=\(generation) current=\(captureGeneration))")
-            completion(.success(()))
             return
         }
 
@@ -284,12 +311,13 @@ final class AudioRecorder: @unchecked Sendable {
         do {
             try unit.startCapturing()
             diag("capture started: native \(unit.nativeSampleRate) Hz, \(unit.nativeChannelCount) ch (gen=\(generation))")
-            completion(.success(()))
+            resolveStart(.success(()))
         } catch {
             diag("startCapturing failed: \(error.localizedDescription)")
             teardownUnitLocked()
             capturing = false
-            completion(.failure(error))
+            resolveStart(.failure(error))
+            onCaptureFailed?(error)
         }
     }
 
