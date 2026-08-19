@@ -353,6 +353,19 @@ struct SettingsView: View {
 
     // MARK: Advanced
 
+    @State private var openAIKey = ""
+    @State private var keyStatus = ""
+
+    private func saveOpenAIKey() {
+        let trimmed = openAIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { keyStatus = "Paste a key first"; return }
+        // Never keep the key in view state or echo it back — the field is
+        // cleared and only a redacted form is ever shown.
+        keyStatus = APIKeyStore.save(trimmed) ? "Saved \(APIKeyStore.redacted(trimmed))" : "Could not save to Keychain"
+        openAIKey = ""
+        dictation.applyModel()
+    }
+
     @ViewBuilder
     private func advancedDetail(_ prefs: Bindable<Preferences>) -> some View {
         Section {
@@ -367,7 +380,29 @@ struct SettingsView: View {
         } header: {
             Text("Speech model")
         } footer: {
-            Text("Runs on-device. Switching models downloads the new one on first use — the larger whisper.cpp models are 1–3 GB, so the first run can take a while. whisper.cpp models run on the GPU (Metal); WhisperKit models use the Neural Engine.")
+            Text("Local models run on-device; switching downloads the new one on first use (the larger whisper.cpp models are 1–3 GB). The two OpenAI options send your recording to OpenAI's servers and need an API key below.")
+        }
+
+        Section {
+            SecureField("sk-…", text: $openAIKey)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(saveOpenAIKey)
+            HStack {
+                Button("Save key", action: saveOpenAIKey)
+                if APIKeyStore.hasKey {
+                    Button("Remove") {
+                        APIKeyStore.delete()
+                        openAIKey = ""
+                        keyStatus = "Removed"
+                    }
+                }
+                Spacer()
+                if !keyStatus.isEmpty { Text(keyStatus).font(.caption).foregroundStyle(.secondary) }
+            }
+        } header: {
+            Text("OpenAI API key")
+        } footer: {
+            Text("Stored in your Keychain, not in preferences. Only used to authenticate transcription requests when an OpenAI model is selected above.")
         }
 
         Section {

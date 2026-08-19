@@ -124,12 +124,27 @@ final class AudioRecorder: @unchecked Sendable {
     /// Largest absolute sample amplitude seen since the last `start()`.
     private(set) var peakAmplitude: Float = 0
 
-    private let targetFormat = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32,
-        sampleRate: 16_000,
-        channels: 1,
-        interleaved: false
-    )!
+    /// Rate the captured audio is converted to. Set before `start()`; the
+    /// selected engine decides it (local Whisper wants 16 kHz, OpenAI realtime
+    /// wants 24 kHz). Changing it mid-capture is not supported and is ignored.
+    var targetSampleRate: Int = 16_000 {
+        didSet {
+            guard targetSampleRate != oldValue else { return }
+            lifecycleQueue.async { [weak self] in
+                guard let self, !self.capturing else { return }
+                self.targetFormat = Self.makeFormat(rate: self.targetSampleRate)
+            }
+        }
+    }
+
+    private static func makeFormat(rate: Int) -> AVAudioFormat {
+        AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                      sampleRate: Double(rate),
+                      channels: 1,
+                      interleaved: false)!
+    }
+
+    private var targetFormat = makeFormat(rate: 16_000)
 
     init() {}
 
