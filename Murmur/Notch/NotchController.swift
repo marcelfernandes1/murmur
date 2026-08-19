@@ -68,7 +68,7 @@ final class NotchController {
         updateScreenStyle()
         model.partialText = ""
         model.phase = .preparing(message)
-        Task { await notch.expand() }
+        Task { await self.expandOnActiveScreen() }
     }
 
     func showListening() {
@@ -78,7 +78,7 @@ final class NotchController {
         model.partialText = ""
         model.phase = .listening
         startLevelClock()
-        Task { await notch.expand() }
+        Task { await self.expandOnActiveScreen() }
     }
 
     /// Update the live transcript preview while streaming (keeps listening phase).
@@ -107,7 +107,7 @@ final class NotchController {
         updateScreenStyle()
         model.partialText = ""
         model.phase = .learned(term)
-        Task { await notch.expand() }
+        Task { await self.expandOnActiveScreen() }
         scheduleHide(after: 2.4)
     }
 
@@ -125,9 +125,24 @@ final class NotchController {
         hideTask = Task { await notch.hide() }
     }
 
+    /// `DynamicNotch.expand(on:)` defaults its screen to `NSScreen.screens[0]`,
+    /// and Swift evaluates default arguments at the CALL SITE — so calling
+    /// `expand()` indexes that array here and traps whenever it is momentarily
+    /// empty (display reconfiguration, all displays asleep, lid close with no
+    /// external display). Resolve a screen safely instead.
+    private func expandOnActiveScreen() async {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        await notch.expand(on: screen)
+    }
+
     private func scheduleHide(after seconds: Double) {
         hideTask = Task {
             try? await Task.sleep(for: .seconds(seconds))
+            // `try?` swallows the cancellation, so without this guard every
+            // hideTask?.cancel() *performed* the pending hide immediately instead
+            // of suppressing it — hiding the notch for the dictation that just
+            // started. (The transcribe watchdog guards the same pattern.)
+            guard !Task.isCancelled else { return }
             await notch.hide()
         }
     }

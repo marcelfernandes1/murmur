@@ -91,25 +91,29 @@ enum TranscriptCleaner {
     /// someone naming one of their own terms in a sentence. The last word may be
     /// cut short ("Fernande"), which is how it usually arrives.
     static func stripPromptEcho(_ text: String, vocabulary: [String]) -> String {
-        let promptTokens = vocabulary
-            .flatMap { splitWords($0) }
-            .map(normalizeForRepeatDetection)
+        // Match whole TERMS, in the order they were fed to the engine. Flattening
+        // the vocabulary into loose words was wrong twice over: one multi-word
+        // entry ("Marcel Fernandes") armed the strip on its own, and any two
+        // adjacent words from the bias list — which carries up to 200
+        // auto-learned terms — could delete the end of a real sentence.
+        let promptTerms: [[String]] = vocabulary
+            .map { splitWords($0).map(normalizeForRepeatDetection).filter { !$0.isEmpty } }
             .filter { !$0.isEmpty }
-        guard promptTokens.count >= 2 else { return text }
+        guard promptTerms.count >= 2 else { return text }
 
         let words = splitWords(text)
         let tokens = words.map(normalizeForRepeatDetection)
-        guard tokens.count >= 2 else { return text }
+        guard !tokens.isEmpty else { return text }
 
-        let maxRun = min(promptTokens.count, tokens.count)
-        for run in stride(from: maxRun, through: 2, by: -1) {
-            let tail = Array(tokens.suffix(run))
-            guard tail.allSatisfy({ !$0.isEmpty }) else { continue }
-            for offset in 0...(promptTokens.count - run) {
-                let candidate = Array(promptTokens[offset..<(offset + run)])
-                guard matchesAllowingClippedLastWord(tail, candidate) else { continue }
-                let kept = words.dropLast(run).joined(separator: " ")
-                // Tidy the punctuation the removed words were hanging off.
+        // Try every run of two-or-more consecutive terms, longest first, and see
+        // whether the transcript ends with exactly that run.
+        for length in stride(from: promptTerms.count, through: 2, by: -1) {
+            for offset in 0...(promptTerms.count - length) {
+                let run = Array(promptTerms[offset..<(offset + length)]).flatMap { $0 }
+                guard run.count <= tokens.count else { continue }
+                let tail = Array(tokens.suffix(run.count))
+                guard tail.allSatisfy({ !$0.isEmpty }), matchesAllowingClippedLastWord(tail, run) else { continue }
+                let kept = words.dropLast(run.count).joined(separator: " ")
                 return tidySpacing(kept).replacingOccurrences(
                     of: #"[,;:]+$"#, with: "", options: .regularExpression)
             }
@@ -180,6 +184,17 @@ enum TranscriptCleaner {
                   input: "VTURB, Whop, Fernandes", vocab: [], expect: "VTURB, Whop, Fernandes"),
             .init(name: "single-term vocabulary is left alone",
                   input: "All done VTURB", vocab: ["VTURB"], expect: "All done VTURB"),
+            // A multi-word vocabulary entry must not arm the strip on its own,
+            // and must not be deleted when it legitimately ends a sentence.
+            .init(name: "single multi-word term is left alone",
+                  input: "send the deck to Marcel Fernandes", vocab: ["Marcel Fernandes"],
+                  expect: "send the deck to Marcel Fernandes"),
+            .init(name: "one multi-word term among others is kept in real speech",
+                  input: "send the deck to Marcel Fernandes", vocab: ["Marcel Fernandes", "VTURB"],
+                  expect: "send the deck to Marcel Fernandes"),
+            .init(name: "two whole terms in prompt order are still stripped",
+                  input: "ship it today Marcel Fernandes, VTURB",
+                  vocab: ["Marcel Fernandes", "VTURB"], expect: "ship it today"),
             .init(name: "ordinary transcript untouched",
                   input: "Okay, now what I want you to do is check the page.", vocab: vocab,
                   expect: "Okay, now what I want you to do is check the page."),

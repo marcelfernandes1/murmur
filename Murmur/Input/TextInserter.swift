@@ -16,6 +16,10 @@ enum TextInserter {
 
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+        // Tell clipboard managers not to record this. Without it every dictation
+        // is captured and persisted to disk by Paste/Maccy/Alfred, and synced to
+        // other devices via Universal Clipboard, purely because we stage it here.
+        pasteboard.setData(Data(), forType: .init("org.nspasteboard.ConcealedType"))
         let ourChangeCount = pasteboard.changeCount
         postCommandV()
 
@@ -24,7 +28,14 @@ enum TextInserter {
         //    copied something else in the window, leave their new content alone.
         //  • Always clear our transcript even when there was nothing to restore, so
         //    the dictation is never left sitting on the clipboard.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        // Restoring too early is worse than restoring late: the synthetic Cmd+V is
+        // only *enqueued*, and the target reads the pasteboard whenever its main
+        // thread gets to the event. If we restore first, the user's PREVIOUS
+        // clipboard is what lands in their document and the transcript is gone.
+        // Reading a pasteboard does not bump changeCount, so the guard below
+        // cannot detect that case — only a margin can. A busy Electron app or a
+        // VM forwarding the keystroke can take most of a second.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             guard pasteboard.changeCount == ourChangeCount else { return }
             pasteboard.clearContents()
             if !saved.isEmpty { pasteboard.writeObjects(saved) }

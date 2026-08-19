@@ -92,7 +92,7 @@ actor LLMCleaner: TextCleaner {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appendingPathComponent(fileName)
         if FileManager.default.fileExists(atPath: dest.path) {
-            if ModelManifest.sizeMatches(fileName: fileName, at: dest) { return dest }
+            if (try? ModelManifest.verify(fileName: fileName, at: dest)) != nil { return dest }
             try? FileManager.default.removeItem(at: dest)
         }
 
@@ -103,18 +103,21 @@ actor LLMCleaner: TextCleaner {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw CleanerError.downloadFailed
         }
-        // Place atomically (replace if present, else move) rather than remove-then-move.
-        if FileManager.default.fileExists(atPath: dest.path) {
-            _ = try FileManager.default.replaceItemAt(dest, withItemAt: tmp)
-        } else {
-            try FileManager.default.moveItem(at: tmp, to: dest)
-        }
-        // Verify SHA-256 against the build-pinned hash before llama loads the GGUF.
+        // Verify BEFORE the file reaches its real name, so an interrupted verify
+        // can never strand unverified weights at the path the cache trusts.
+        let staging = dest.appendingPathExtension("part")
+        try? FileManager.default.removeItem(at: staging)
+        try FileManager.default.moveItem(at: tmp, to: staging)
         do {
-            try ModelManifest.verify(fileName: fileName, at: dest)
+            try ModelManifest.verify(fileName: fileName, at: staging)
         } catch {
-            try? FileManager.default.removeItem(at: dest)
+            try? FileManager.default.removeItem(at: staging)
             throw error
+        }
+        if FileManager.default.fileExists(atPath: dest.path) {
+            _ = try FileManager.default.replaceItemAt(dest, withItemAt: staging)
+        } else {
+            try FileManager.default.moveItem(at: staging, to: dest)
         }
         return dest
     }

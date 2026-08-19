@@ -84,27 +84,46 @@ actor WhisperCppService: SpeechEngine {
 
         let reference = DecodeCoverage.speechReferenceLevel(samples)
         var passes = 0
+        var attempted: Set<Int> = []
         while passes < Self.maxRecoveryPasses,
               let gap = DecodeCoverage.firstRecoverableGap(in: segments, samples: samples,
-                                                           reference: reference) {
+                                                           reference: reference,
+                                                           excluding: attempted) {
             passes += 1
-            let recovered = model.transcribe(samples: Array(samples[gap.start..<gap.end]),
-                                             language: language, vocabulary: vocabulary) ?? []
-            let from = Double(gap.start) / Double(Self.sampleRate)
-            let to = Double(gap.end) / Double(Self.sampleRate)
-            // Logged at every occurrence: this firing means whisper.cpp dropped
-            // speech, so it's the trail to follow if the bug ever resurfaces.
-            Self.log.warning("coverage gap \(from, privacy: .public)s–\(to, privacy: .public)s was not transcribed → re-decoded, recovered \(recovered.count, privacy: .public) segments")
-            #if DEBUG
-            Self.fileLog("WHISPER_CPP recovered gap \(gap.start)–\(gap.end) segments=\(recovered.count)")
-            #endif
-            // Nothing came back for a stretch we believed held speech — stop
-            // rather than re-decoding the same silence up to the pass cap.
-            guard !recovered.isEmpty else { break }
+            attempted.insert(gap.start)
+            let slice = Array(samples[gap.start..<gap.end])
+            // NO vocabulary here. A gap slice is short, and whisper_full pads
+            // anything under 30 s with silence — handing it the vocabulary as an
+            // initial prompt again is precisely the condition that makes whisper
+            // transcribe the prompt itself, and a recovered segment lands in the
+            // MIDDLE of the transcript where neither the tail trim nor the echo
+            // strip can reach it. Recovery buys back dropped audio; it must not
+            // be able to introduce text.
+            let recovered = model.transcribe(samples: slice, language: language, vocabulary: []) ?? []
             let offset = Double(gap.start) / Double(Self.sampleRate)
-            segments.append(contentsOf: recovered.map {
-                WhisperSegment(text: $0.text, start: $0.start + offset, end: $0.end + offset)
-            })
+            // Keep only what genuinely sits on speech inside this gap. whisper
+            // invents over the padding too, and an invented closing here would be
+            // spliced mid-sentence.
+            let kept = recovered.compactMap { segment -> WhisperSegment? in
+                guard segment.end > segment.start else { return nil }
+                let start = DecodeCoverage.clamp(segment.start, within: slice.count)
+                let end = DecodeCoverage.clamp(segment.end, within: slice.count)
+                guard end > start,
+                      DecodeCoverage.speechSeconds(slice[start..<end], reference: reference) > 0 else { return nil }
+                return WhisperSegment(text: segment.text,
+                                      start: segment.start + offset,
+                                      end: segment.end + offset)
+            }
+            let from = offset
+            let to = Double(gap.end) / Double(Self.sampleRate)
+            Self.log.warning("coverage gap \(from, privacy: .public)s–\(to, privacy: .public)s was not transcribed → re-decoded, recovered \(kept.count, privacy: .public) segments")
+            #if DEBUG
+            Self.fileLog("WHISPER_CPP recovered gap \(gap.start)–\(gap.end) segments=\(kept.count)")
+            #endif
+            // Nothing usable here — move on to the next gap rather than giving up
+            // on the rest of the take.
+            guard !kept.isEmpty else { continue }
+            segments.append(contentsOf: kept)
             segments.sort { $0.start < $1.start }
         }
 
@@ -116,8 +135,7 @@ actor WhisperCppService: SpeechEngine {
             Self.log.log("dropped \(segments.count - trimmed.count, privacy: .public) fabricated trailing segment(s) sitting on silence")
         }
 
-        let text = trimmed.map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
-        return TranscriptCleaner.removeDegenerateRepeats(text)
+        return trimmed.map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     private func loadModel() async throws -> WhisperModel {
@@ -156,9 +174,13 @@ actor WhisperCppService: SpeechEngine {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appendingPathComponent(fileName)
         if FileManager.default.fileExists(atPath: dest.path) {
-            // Trust the cache only if its size still matches the pin (instant check);
-            // a truncated/corrupt cache is removed and re-downloaded.
-            if ModelManifest.sizeMatches(fileName: fileName, at: dest) { return dest }
+            // Verify the cached file against the pinned SHA-256, not just its
+            // size. Size alone meant the hash was checked exactly once ever — on
+            // first download — so any process running as the user could swap in a
+            // tampered file of the same byte count and it would be fed to the
+            // ggml C parser unchecked on every later launch. Hashing costs a
+            // second or two, once per launch, off the main thread.
+            if (try? ModelManifest.verify(fileName: fileName, at: dest)) != nil { return dest }
             try? FileManager.default.removeItem(at: dest)
         }
 
@@ -167,16 +189,25 @@ actor WhisperCppService: SpeechEngine {
         }
         notify?(.downloading(0))
         let downloader = ModelDownloader { fraction in notify?(.downloading(fraction)) }
-        let url = try await downloader.download(from: remote, to: dest)
-        // Verify SHA-256 against the build-pinned hash before the C parser ever sees
-        // the file. On mismatch, delete it so a poisoned/corrupt file can't persist.
+        // Land the download beside the real path and only move it into place once
+        // it verifies. Downloading straight to `dest` meant a crash or quit during
+        // the multi-second hash of a multi-gigabyte file left an UNVERIFIED file
+        // at the real filename, which every later launch then trusted.
+        let staging = dest.appendingPathExtension("part")
+        try? FileManager.default.removeItem(at: staging)
+        let url = try await downloader.download(from: remote, to: staging)
         do {
             try ModelManifest.verify(fileName: fileName, at: url)
         } catch {
             try? FileManager.default.removeItem(at: url)
             throw error
         }
-        return url
+        if FileManager.default.fileExists(atPath: dest.path) {
+            _ = try FileManager.default.replaceItemAt(dest, withItemAt: url)
+        } else {
+            try FileManager.default.moveItem(at: url, to: dest)
+        }
+        return dest
     }
 
     enum WhisperCppError: Error { case modelLoadFailed, inferenceFailed }
