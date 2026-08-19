@@ -98,6 +98,19 @@ final class AudioRecorder: @unchecked Sendable {
     private var captureGeneration = 0
     private var converter: AVAudioConverter?
     private var monoInputFormat: AVAudioFormat?
+    /// Render scratch, built once per capture on the lifecycle queue and then
+    /// touched only by the render thread. Allocating these inside the callback —
+    /// and constructing `AVAudioConverter` there, which spins up a resampler and
+    /// takes Obj-C locks — routinely blew the callback deadline on the FIRST
+    /// buffer of every take, which is precisely where clipped leading words came
+    /// from.
+    private var monoScratch: AVAudioPCMBuffer?
+    private var convertedScratch: AVAudioPCMBuffer?
+    /// Loudest input channel, latched after the first few callbacks. Rescanning
+    /// every channel of every buffer costs millions of multiply-adds per take to
+    /// re-derive an answer that does not change.
+    private var chosenChannel = 0
+    private var channelLatchCallbacks = 0
     /// True between a successful `start()` and the matching `stop()`.
     private var capturing = false
     /// The continuation for the in-flight `start()`. Held here rather than passed
@@ -120,9 +133,22 @@ final class AudioRecorder: @unchecked Sendable {
     private var levelSumSquares: Float = 0
     private var levelFrames: Int = 0
     private var levelPeak: Float = 0
+    /// Sample-rate conversion failures on the render thread (diagnostics only).
+    private var conversionFailures = 0
 
     /// Largest absolute sample amplitude seen since the last `start()`.
-    private(set) var peakAmplitude: Float = 0
+    ///
+    /// Guarded by `lock` like every other cross-thread field. It is written on
+    /// the render thread and read from the main actor, and it is not a
+    /// diagnostic — `captureOutcome` uses it to decide `.noSignal`, which throws
+    /// the take away. An unsynchronised read there could discard a good
+    /// recording.
+    var peakAmplitude: Float {
+        lock.lock()
+        defer { lock.unlock() }
+        return peakAmplitudeStorage
+    }
+    private var peakAmplitudeStorage: Float = 0
 
     /// Rate the captured audio is converted to. Set before `start()`; the
     /// selected engine decides it (local Whisper wants 16 kHz, OpenAI realtime
@@ -192,7 +218,7 @@ final class AudioRecorder: @unchecked Sendable {
         lifecycleQueue.sync {
             let (cb, frames) = capturedCounters()
             let rc = captureUnit
-            diag("stop requested reason=\(reason.rawValue) gen=\(captureGeneration) (capturing=\(capturing) renderCallbacks=\(rc?.renderCallbackCount ?? 0) renderedFrames=\(rc?.renderedFrameCount ?? 0) droppedOversize=\(rc?.droppedOversizeSlices ?? 0) bufferCallbacks=\(cb) totalInputFrames=\(frames) peak=\(peakAmplitude) samples=\(snapshotCount()))")
+            diag("stop requested reason=\(reason.rawValue) gen=\(captureGeneration) (capturing=\(capturing) renderCallbacks=\(rc?.renderCallbackCount ?? 0) renderedFrames=\(rc?.renderedFrameCount ?? 0) droppedOversize=\(rc?.droppedOversizeSlices ?? 0) conversionFailures=\(conversionFailures) bufferCallbacks=\(cb) totalInputFrames=\(frames) peak=\(peakAmplitude) samples=\(snapshotCount()))")
             capturing = false
             captureGeneration &+= 1   // invalidate any in-flight settle hop
             // A start still waiting (e.g. Esc during the Bluetooth settle poll)
@@ -334,12 +360,12 @@ final class AudioRecorder: @unchecked Sendable {
             return
         }
 
-        // Conversion is rebuilt lazily in `process()` from the first buffer's rate.
-        converter = nil
-        monoInputFormat = nil
-
         do {
             try unit.startCapturing()
+            // Build conversion state HERE, on the lifecycle queue, now that the
+            // unit knows its native format — never inside the render callback.
+            prepareConversion(sampleRate: unit.nativeSampleRate,
+                              channels: Int(unit.nativeChannelCount))
             diag("capture started: native \(unit.nativeSampleRate) Hz, \(unit.nativeChannelCount) ch (gen=\(generation))")
             resolveStart(.success(()))
         } catch {
@@ -350,6 +376,34 @@ final class AudioRecorder: @unchecked Sendable {
             onCaptureFailed?(error)
         }
     }
+
+    /// Build the converter and the render scratch buffers for a known input
+    /// format. Runs on the lifecycle queue before any callback can fire.
+    private func prepareConversion(sampleRate: Double, channels: Int) {
+        chosenChannel = 0
+        channelLatchCallbacks = 0
+        guard sampleRate > 0,
+              let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                       sampleRate: sampleRate, channels: 1, interleaved: false) else {
+            converter = nil; monoInputFormat = nil
+            monoScratch = nil; convertedScratch = nil
+            return
+        }
+        monoInputFormat = mono
+        converter = AVAudioConverter(from: mono, to: targetFormat)
+
+        let capacity = AVAudioFrameCount(Self.maxRenderFrames)
+        monoScratch = AVAudioPCMBuffer(pcmFormat: mono, frameCapacity: capacity)
+        let ratio = targetFormat.sampleRate / sampleRate
+        convertedScratch = AVAudioPCMBuffer(
+            pcmFormat: targetFormat,
+            frameCapacity: AVAudioFrameCount(Double(Self.maxRenderFrames) * max(1, ratio)) + 64)
+        _ = channels
+    }
+
+    /// Upper bound on frames per render callback; the scratch buffers are sized
+    /// to it. Matches the cap the capture unit requests.
+    private static let maxRenderFrames = 32_768
 
     /// Stop and release the current capture unit, if any. Safe to call repeatedly.
     /// Never clears captured samples — those are owned by start/stop.
@@ -394,53 +448,43 @@ final class AudioRecorder: @unchecked Sendable {
                          frames: Int,
                          sampleRate inputRate: Double) {
         guard frames > 0, channelCount > 0 else { return }
-        countInput(frames: frames)
 
-        if converter == nil || monoInputFormat?.sampleRate != inputRate {
-            guard inputRate > 0, let mono = AVAudioFormat(
-                commonFormat: .pcmFormatFloat32,
-                sampleRate: inputRate,
-                channels: 1,
-                interleaved: false
-            ) else { return }
-            monoInputFormat = mono
-            converter = AVAudioConverter(from: mono, to: targetFormat)
-        }
-        guard let converter, let monoFormat = monoInputFormat else { return }
-
-        // 1) Downmix to mono ourselves (loudest channel). AVAudioConverter's own
-        //    N→1 downmix yields silence when the device's format has no channel layout.
-        guard let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: AVAudioFrameCount(frames)),
+        // Everything below is preallocated; the render thread allocates nothing.
+        guard let converter, let monoFormat = monoInputFormat,
+              let mono = monoScratch, let out = convertedScratch,
+              monoFormat.sampleRate == inputRate,
+              frames <= Int(mono.frameCapacity),
               let dst = mono.floatChannelData?[0] else { return }
         mono.frameLength = AVAudioFrameCount(frames)
-        var bestChannel = 0
-        if channelCount > 1 {
+
+        // Pick the loudest channel for the first few buffers, then stop asking.
+        if channelCount > 1, channelLatchCallbacks < 8 {
+            channelLatchCallbacks += 1
             var bestEnergy: Float = -1
             for c in 0..<channelCount {
                 var energy: Float = 0
                 let src = srcData[c]
                 for f in 0..<frames { let v = src[f]; energy += v * v }
-                if energy > bestEnergy { bestEnergy = energy; bestChannel = c }
+                if energy > bestEnergy { bestEnergy = energy; chosenChannel = c }
             }
         }
-        let src = srcData[bestChannel]
-        for f in 0..<frames { dst[f] = src[f] }
+        let src = srcData[min(chosenChannel, channelCount - 1)]
+        dst.update(from: src, count: frames)
 
-        // 2) Sample-rate convert the mono buffer to 16 kHz.
-        let ratio = targetFormat.sampleRate / monoFormat.sampleRate
-        let capacity = AVAudioFrameCount(Double(frames) * ratio) + 16
-        guard let out = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
-
+        out.frameLength = 0
         var fed = false
         var conversionError: NSError?
-        converter.convert(to: out, error: &conversionError) { _, status in
-            if fed {
-                status.pointee = .noDataNow
-                return nil
-            }
+        let status = converter.convert(to: out, error: &conversionError) { _, status in
+            if fed { status.pointee = .noDataNow; return nil }
             fed = true
             status.pointee = .haveData
             return mono
+        }
+        if status == .error {
+            // Counted, not logged: this runs on the real-time thread. A silent
+            // drop here used to be invisible in the diagnostics.
+            conversionFailures += 1
+            return
         }
 
         guard let channel = out.floatChannelData, out.frameLength > 0 else { return }
@@ -453,10 +497,9 @@ final class AudioRecorder: @unchecked Sendable {
             sumSquares += value * value
             localPeak = max(localPeak, abs(value))
         }
-        if localPeak > peakAmplitude { peakAmplitude = localPeak }
-
-        accumulateLevel(sumSquares: sumSquares, frames: outFrames, peak: localPeak)
-        append(slice)
+        // One lock acquisition for everything this callback publishes, instead of
+        // three back-to-back on the real-time thread.
+        commit(slice, sumSquares: sumSquares, peak: localPeak, inputFrames: frames)
     }
 
     /// Drain the level accumulator: RMS and peak over the interval since the last
@@ -474,38 +517,35 @@ final class AudioRecorder: @unchecked Sendable {
         return ((levelSumSquares / Float(levelFrames)).squareRoot(), levelPeak)
     }
 
-    private func accumulateLevel(sumSquares: Float, frames: Int, peak: Float) {
+    /// Publish one callback's worth of work under a single lock: the converted
+    /// samples, the level accumulator, the peak, and the input counters.
+    private func commit(_ slice: UnsafeBufferPointer<Float>,
+                        sumSquares: Float, peak: Float, inputFrames: Int) {
         lock.lock()
+        samples.append(contentsOf: slice)
         levelSumSquares += sumSquares
-        levelFrames += frames
+        levelFrames += slice.count
         if peak > levelPeak { levelPeak = peak }
+        if peak > peakAmplitudeStorage { peakAmplitudeStorage = peak }
+        bufferCallbackCount += 1
+        totalInputFrames += inputFrames
         lock.unlock()
     }
 
     // MARK: - Synchronous sample buffer access (lock never held across a suspension)
 
     private func resetSamples() {
-        peakAmplitude = 0
         lock.lock()
+        peakAmplitudeStorage = 0
+        // Reserve a minute up front so a long take does not repeatedly realloc
+        // and memcpy multi-megabyte buffers from inside the render callback.
         samples.removeAll(keepingCapacity: true)
+        if samples.capacity < 60 * targetSampleRate { samples.reserveCapacity(60 * targetSampleRate) }
         bufferCallbackCount = 0
         totalInputFrames = 0
         levelSumSquares = 0
         levelFrames = 0
         levelPeak = 0
-        lock.unlock()
-    }
-
-    private func append(_ slice: UnsafeBufferPointer<Float>) {
-        lock.lock()
-        samples.append(contentsOf: slice)
-        lock.unlock()
-    }
-
-    private func countInput(frames: Int) {
-        lock.lock()
-        bufferCallbackCount += 1
-        totalInputFrames += frames
         lock.unlock()
     }
 

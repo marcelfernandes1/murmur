@@ -28,8 +28,15 @@ final class FieldEditWatcher {
     // (thinking, retyping a word) doesn't get mistaken for a completed edit.
     private let editSettleDuration: Duration = .seconds(3)
 
-    /// Begin watching the currently-focused field for an edit to `insertedText`.
-    func start(insertedText: String) {
+    /// Begin watching for an edit to `insertedText`.
+    ///
+    /// `pastedInto` is the element the text actually went into, captured at
+    /// delivery. Re-resolving focus 350 ms later instead — which is what this
+    /// used to do — could latch onto a completely different field if the user
+    /// clicked away in that window, then snapshot up to 20,000 characters of
+    /// content Murmur never wrote and learn a "correction" from an edit
+    /// somewhere inside it.
+    func start(insertedText: String, pastedInto: AXUIElement?) {
         cancel()
         Self.diagReset()
         Self.diag("start: watching for edit, insertedLen=\(insertedText.count) text=“\(insertedText.prefix(60))”")
@@ -43,7 +50,7 @@ final class FieldEditWatcher {
         pollTask = Task { [weak self] in
             try? await Task.sleep(for: settle)
             guard let self, !Task.isCancelled else { Self.diag("aborted before snapshot"); return }
-            guard self.snapshot(insertedText: insertedText) else {
+            guard self.snapshot(insertedText: insertedText, element: pastedInto) else {
                 Self.diag("snapshot FAILED — no focused element or value unreadable via AX (app doesn't expose text). Learning skipped.")
                 return
             }
@@ -124,12 +131,22 @@ final class FieldEditWatcher {
 
     /// Capture the focused element and its post-paste value/insertion point.
     /// Returns false if there's nothing readable to watch.
-    private func snapshot(insertedText: String) -> Bool {
-        guard let el = Self.focusedElement(), let value = Self.stringValue(of: el) else { return false }
+    private func snapshot(insertedText: String, element candidate: AXUIElement?) -> Bool {
+        // Only the element we pasted into. No fallback to whatever has focus now.
+        guard let el = candidate, let value = Self.stringValue(of: el) else { return false }
         guard value.count <= 20_000 else { return false }   // don't diff huge documents
+        guard let range = Self.locateInsertion(of: insertedText, in: value,
+                                               caret: Self.selectedRange(of: el)) else {
+            // Our text isn't in there — either the paste didn't land or this is
+            // not the field we wrote to. Without a known insertion span the
+            // containment check cannot run, and anything "learned" would come
+            // from content the user never dictated.
+            Self.diag("snapshot rejected: inserted text not found in the pasted element")
+            return false
+        }
         element = el
         baseline = value
-        insertedRange = Self.locateInsertion(of: insertedText, in: value, caret: Self.selectedRange(of: el))
+        insertedRange = range
         return true
     }
 

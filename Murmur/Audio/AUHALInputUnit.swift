@@ -34,10 +34,13 @@ final class AUHALInputUnit {
         var errorDescription: String? { "AUHAL \(stage) failed: \(osStatusString(status))" }
     }
 
-    /// Largest input slice we will render; the render buffers are sized to this.
-    /// Built-in/USB devices use 512–4096; HFP rarely exceeds this. Larger slices
-    /// are dropped (counted, never logged from the RT thread).
-    private static let maxFrames = 8192
+    /// Floor for the render buffer size. The real size is taken from the device
+    /// itself at start (below) — an aggregate or loopback device, or a DAW that
+    /// raised the shared buffer size, can hand us far more than this, and a slice
+    /// we cannot hold is audio we throw away.
+    private static let minMaxFrames = 8192
+    /// Actual render buffer capacity, resolved from the device.
+    private var maxFrames = minMaxFrames
 
     /// Called on the real-time render thread with deinterleaved Float32 channels.
     /// Allocation-free: the pointers reference preallocated render storage valid
@@ -136,13 +139,18 @@ final class AUHALInputUnit {
             &client, UInt32(MemoryLayout<AudioStreamBasicDescription>.size)))
 
         // Cap the render slice so our preallocated buffers always suffice.
-        var maxSlice = UInt32(Self.maxFrames)
+        var maxSlice = UInt32(maxFrames)
         _ = AudioUnitSetProperty(
             unit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0,
             &maxSlice, UInt32(MemoryLayout<UInt32>.size))
 
         clientChannelCount = Int(native.mChannelsPerFrame)
         clientSampleRate = native.mSampleRate
+        // Size the render storage to what this device will actually deliver, with
+        // headroom. Dropping an oversize slice returns noErr without rendering,
+        // so that audio is gone for good — it surfaced as an entire take coming
+        // back empty ("No audio captured") on a device with a large buffer.
+        maxFrames = max(Self.minMaxFrames, Int(deviceBufferFrameSize()) * 2)
         allocateRenderStorage(channels: clientChannelCount)
 
         var cb = AURenderCallbackStruct(
@@ -172,15 +180,33 @@ final class AUHALInputUnit {
 
     // MARK: - Render storage (preallocated; touched only on the RT thread once started)
 
+    /// The device's current IO buffer size in frames, or 0 if unreadable. This is
+    /// a device-wide setting any other app can change.
+    private func deviceBufferFrameSize() -> UInt32 {
+        guard let unit else { return 0 }
+        var device = AudioDeviceID(0)
+        var deviceSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                   kAudioUnitScope_Global, 0, &device, &deviceSize) == noErr else { return 0 }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyBufferFrameSize,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain)
+        var frames = UInt32(0)
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &frames) == noErr else { return 0 }
+        return frames
+    }
+
     private func allocateRenderStorage(channels: Int) {
         freeRenderStorage()
         let list = AudioBufferList.allocate(maximumBuffers: channels)
-        let bytes = Self.maxFrames * MemoryLayout<Float>.size
+        let bytes = maxFrames * MemoryLayout<Float>.size
         for i in 0..<channels {
-            list[i] = AudioBuffer(
-                mNumberChannels: 1,
-                mDataByteSize: UInt32(bytes),
-                mData: malloc(bytes))
+            // A nil malloc would be force-unwrapped on the render thread; refuse
+            // to arm the callback instead of trapping inside Core Audio.
+            guard let storage = malloc(bytes) else { freeRenderStorage(); return }
+            list[i] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(bytes), mData: storage)
         }
         abl = list
         channelPtrs = UnsafeMutablePointer<UnsafeMutablePointer<Float>>.allocate(capacity: channels)
@@ -210,7 +236,7 @@ final class AUHALInputUnit {
                         frames: UInt32) -> OSStatus {
         guard let unit, let abl, let channelPtrs else { return noErr }
         let n = Int(frames)
-        if n > Self.maxFrames { droppedOversizeSlices += 1; return noErr }
+        if n > maxFrames { droppedOversizeSlices += 1; return noErr }
 
         let byteSize = UInt32(n * MemoryLayout<Float>.size)
         for i in 0..<abl.count { abl[i].mDataByteSize = byteSize }

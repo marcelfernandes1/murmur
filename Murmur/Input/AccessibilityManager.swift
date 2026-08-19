@@ -72,6 +72,13 @@ final class AccessibilityManager {
         return settableStatus == .success && settable.boolValue
     }
 
+    /// The element that will receive a paste right now, for callers that need to
+    /// keep watching it afterwards.
+    func focusedElementForEditing() -> AXUIElement? {
+        guard isTrusted else { return nil }
+        return focusedElement()
+    }
+
     /// The focused element, asking the frontmost application directly when the
     /// system-wide query comes up empty.
     ///

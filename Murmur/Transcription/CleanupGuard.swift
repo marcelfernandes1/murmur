@@ -60,7 +60,16 @@ enum CleanupGuard {
         //    in-order subsequence of the spoken word tokens. (Subsequence implies the
         //    old "every word was actually said" rule and additionally rejects the
         //    model swapping word/clause order — e.g. switching a recipient.)
-        guard isSubsequence(cleanedWordTokens, of: originalWordTokens) else { return original }
+        guard let lastMatch = subsequenceEnd(cleanedWordTokens, of: originalWordTokens) else { return original }
+
+        // 1b) …and it must reach the END. A cleanup that silently stopped early is
+        //     still a perfect subsequence, so rule 1 waves it through. That is
+        //     exactly what a context-window overrun produces: the local model has
+        //     a fixed budget shared by the prompt, the transcript and the output,
+        //     and when it runs out it simply stops mid-sentence and returns what
+        //     it had. A long dictation would lose its tail with "Inserted" shown.
+        let unmatchedTail = originalWordTokens.count - lastMatch
+        if unmatchedTail > max(8, originalWordTokens.count / 8) { return original }
 
         // 2) No fabricated numbers: a digit token is only legitimate if the speaker
         //    actually gave a number to convert. Allow at most as many digit tokens as
@@ -80,13 +89,20 @@ enum CleanupGuard {
         return trimmed
     }
 
-    /// Whether `sub` appears within `seq` in the same order (gaps allowed).
-    private static func isSubsequence(_ sub: [String], of seq: [String]) -> Bool {
+    /// If `sub` appears within `seq` in the same order (gaps allowed), the index
+    /// in `seq` just past where the LAST token of `sub` matched — which is what
+    /// tells us whether the cleanup covered the end. Nil when it isn't a
+    /// subsequence at all.
+    private static func subsequenceEnd(_ sub: [String], of seq: [String]) -> Int? {
         var i = 0
-        for token in seq {
-            if i < sub.count, sub[i] == token { i += 1 }
+        var end = 0
+        for (index, token) in seq.enumerated() {
+            if i < sub.count, sub[i] == token {
+                i += 1
+                end = index + 1
+            }
         }
-        return i == sub.count
+        return i == sub.count ? end : nil
     }
 
     private static func wordCount(_ text: String) -> Int {

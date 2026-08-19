@@ -9,7 +9,12 @@ final class HistoryStore {
     let container: ModelContainer
 
     // `nonisolated` so the background write task (below) can use them off the main actor.
-    nonisolated private static let log = Logger(subsystem: "com.murmur.app", category: "history")
+    nonisolated fileprivate static let log = Logger(subsystem: "com.murmur.app", category: "history")
+
+    /// True when the on-disk store could not be opened and was moved aside, so
+    /// the app started with empty history. Surfaced in the History view — losing
+    /// every transcript silently is worse than the failure itself.
+    private(set) var didResetStore = false
 
     /// Cap on retained dictations. History is a convenience log, not a system of
     /// record; the oldest entries beyond this are pruned so it can't grow without
@@ -26,7 +31,8 @@ final class HistoryStore {
             // lightweight schema change, or corruption). Rather than `fatalError` —
             // which would crash-loop on every launch with no escape — move the bad
             // store aside and start fresh so the app stays usable.
-            Self.log.error("History store unreadable, recreating: \(String(describing: error), privacy: .public)")
+            Self.log.fault("History store unreadable, moving aside and starting empty: \(String(describing: error), privacy: .public)")
+            didResetStore = true
             Self.moveAside(url)
             if let recovered = try? ModelContainer(for: Transcript.self, configurations: config) {
                 container = recovered
@@ -73,24 +79,48 @@ final class HistoryStore {
     /// - Parameter original: the pre-cleanup text (raw words, fillers removed) when
     ///   smart cleanup ran, so the comparison screen can show input vs. output.
     func add(_ text: String, original: String? = nil) {
+        // Stamp the time HERE, not inside the background task. `.now` evaluated
+        // when a utility-priority task happens to get scheduled meant two
+        // dictations delivered a few hundred ms apart could be stored — and so
+        // listed — in the wrong order.
+        let createdAt = Date()
         // Write on a background context so a slow SQLite commit (large WAL checkpoint,
         // contended disk) never blocks the main run loop / UI. The view's `@Query`
         // on the main context is updated automatically when this save lands.
+        // Serialized through one actor: independent detached tasks raced each
+        // other's `pruneIfNeeded`, which is a non-atomic count-then-delete, so two
+        // concurrent writers could each delete the same "oldest" rows.
         let container = self.container
-        Task.detached(priority: .utility) {
+        Task { await HistoryWriter.shared.write(text: text, original: original,
+                                                createdAt: createdAt, container: container) }
+    }
+
+    /// Serializes every history write. An actor rather than a queue so the work
+    /// stays in structured concurrency with the rest of the app.
+    private actor HistoryWriter {
+        static let shared = HistoryWriter()
+
+        func write(text: String, original: String?, createdAt: Date, container: ModelContainer) {
             let context = ModelContext(container)
-            context.insert(Transcript(text: text, createdAt: .now, original: original))
+            context.insert(Transcript(text: text, createdAt: createdAt, original: original))
             do {
                 try context.save()
-                try Self.pruneIfNeeded(context)
             } catch {
-                Self.log.error("History save failed: \(String(describing: error), privacy: .public)")
+                HistoryStore.log.error("History save failed: \(String(describing: error), privacy: .public)")
+                return
+            }
+            // Pruning failing is not the same as losing the transcript, so it is
+            // reported separately rather than under "save failed".
+            do {
+                try HistoryStore.pruneIfNeeded(context)
+            } catch {
+                HistoryStore.log.error("History prune failed: \(String(describing: error), privacy: .public)")
             }
         }
     }
 
     /// Delete the oldest entries once the store exceeds `maxEntries`.
-    nonisolated private static func pruneIfNeeded(_ context: ModelContext) throws {
+    nonisolated fileprivate static func pruneIfNeeded(_ context: ModelContext) throws {
         let count = try context.fetchCount(FetchDescriptor<Transcript>())
         guard count > maxEntries else { return }
         var descriptor = FetchDescriptor<Transcript>(sortBy: [SortDescriptor(\.createdAt, order: .forward)])
