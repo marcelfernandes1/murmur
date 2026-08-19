@@ -82,6 +82,8 @@ final class DictationController {
     /// Pumps captured audio into a live (streaming) engine while recording.
     private var livePumpTask: Task<Void, Never>?
     private var liveEngine: (any LiveSpeechEngine)?
+    /// How much of the take the live pump has already sent.
+    private var liveSentSamples = 0
 
     /// Wall-clock trigger-down instant, used to tell an accidental tap (released
     /// almost immediately) from a real hold that happened to capture nothing.
@@ -499,10 +501,24 @@ final class DictationController {
                 // A streaming cloud engine transcribes WHILE the user talks, so
                 // releasing the trigger costs one commit round trip instead of a
                 // whole upload-and-decode. Start the session and begin pumping.
+                // Cloud engines: open the connection now, not after the user
+                // stops talking.
+                if let engine = dictationEngine { Task { await engine.warmUp() } }
                 if let live = dictationEngine as? any LiveSpeechEngine {
                     liveEngine = live
                     let language = preferences.language.code
                     let vocab = biasVocabulary()
+                    // Show the words as the server produces them. This is the
+                    // whole point of the realtime engine — without it the
+                    // streaming happens entirely off-screen.
+                    let generation = dictationGeneration
+                    await live.setPartialHandler { [weak self] partial in
+                        Task { @MainActor in
+                            guard let self, self.isRecording,
+                                  self.dictationGeneration == generation else { return }
+                            self.notch.showStreamingPartial(partial)
+                        }
+                    }
                     await live.beginLive(language: language, vocabulary: vocab)
                     startLivePump(live)
                 }
@@ -529,23 +545,22 @@ final class DictationController {
     /// thread must not be doing base64 and WebSocket sends.
     private func startLivePump(_ live: any LiveSpeechEngine) {
         livePumpTask?.cancel()
+        liveSentSamples = 0
         livePumpTask = Task { [weak self] in
-            var sent = 0
             while let self, self.isRecording, !Task.isCancelled {
-                let all = self.recorder.currentSamples()
-                if all.count > sent {
-                    let chunk = Array(all[sent...])
-                    sent = all.count
-                    await live.appendLive(chunk)
-                }
-                try? await Task.sleep(for: .milliseconds(200))
-            }
-            // Anything captured between the last poll and the stop.
-            if let self {
-                let all = self.recorder.currentSamples()
-                if all.count > sent { await live.appendLive(Array(all[sent...])) }
+                await self.flushLiveAudio(to: live)
+                try? await Task.sleep(for: .milliseconds(100))
             }
         }
+    }
+
+    /// Send everything captured since the last flush. Also called once at commit
+    /// so the tail of the take is up before the turn is committed.
+    private func flushLiveAudio(to live: any LiveSpeechEngine) async {
+        let (chunk, total) = recorder.samples(from: liveSentSamples)
+        guard !chunk.isEmpty else { return }
+        liveSentSamples = total
+        await live.appendLive(chunk)
     }
 
     /// While recording, periodically transcribe the audio-so-far for a live
@@ -694,8 +709,13 @@ final class DictationController {
                 var text: String
                 if let live = liveEngine {
                     // Already transcribed while the user was talking; this just
-                    // commits the turn and collects the final transcript.
-                    await livePumpTask?.value
+                    // sends the tail, commits the turn and collects the final
+                    // transcript. Cancel the pump rather than awaiting it — it is
+                    // mid-sleep, and waiting for it added up to a poll interval
+                    // of pure latency to every dictation.
+                    livePumpTask?.cancel()
+                    livePumpTask = nil
+                    await flushLiveAudio(to: live)
                     text = try await live.finishLive()
                     liveEngine = nil
                 } else {

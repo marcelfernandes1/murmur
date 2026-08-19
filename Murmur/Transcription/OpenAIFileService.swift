@@ -20,6 +20,15 @@ actor OpenAIFileService: SpeechEngine {
 
     private static let log = Logger(subsystem: "com.murmur.app", category: "openai")
     private var stateHandler: (@Sendable (EngineLoadState) -> Void)?
+    private var warmedAt: ContinuousClock.Instant?
+
+    /// One session so connections are pooled and reused across dictations.
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.waitsForConnectivity = true
+        config.httpMaximumConnectionsPerHost = 4
+        return URLSession(configuration: config)
+    }()
 
     nonisolated var inputSampleRate: Int { 16_000 }
 
@@ -31,6 +40,23 @@ actor OpenAIFileService: SpeechEngine {
     /// the transcription watchdog behave the same as for a local model.
     func preload() async {
         stateHandler?(APIKeyStore.hasKey ? .ready : .failed("Add your OpenAI API key in Settings"))
+    }
+
+    /// Open the TLS connection now, while the user is still speaking, so the
+    /// upload after they stop reuses a warm socket. Measured round trips were a
+    /// flat ~2.5 s regardless of audio length — that is handshake plus server
+    /// time, not upload, so this is the part worth moving off the critical path.
+    /// URLSession keeps pooled connections alive for a while; re-warming more
+    /// than once a minute is wasted work.
+    func warmUp() async {
+        guard APIKeyStore.hasKey else { return }
+        if let warmedAt, ContinuousClock.now - warmedAt < .seconds(60) { return }
+        warmedAt = ContinuousClock.now
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/models")!)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 5
+        if let key = APIKeyStore.load() { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+        _ = try? await Self.session.data(for: request)
     }
 
     func transcribe(_ samples: [Float], language: String?, vocabulary: [String]) async throws -> String {
@@ -67,7 +93,7 @@ actor OpenAIFileService: SpeechEngine {
         body.append("\r\n--\(boundary)--\r\n")
 
         let started = ContinuousClock.now
-        let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+        let (data, response) = try await Self.session.upload(for: request, from: body)
         let elapsed = ContinuousClock.now - started
 
         guard let http = response as? HTTPURLResponse else { throw OpenAIError.badResponse("no HTTP response") }

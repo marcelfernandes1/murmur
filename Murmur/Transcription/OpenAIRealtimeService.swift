@@ -22,6 +22,7 @@ actor OpenAIRealtimeService: LiveSpeechEngine {
     nonisolated var inputSampleRate: Int { 24_000 }
 
     private var stateHandler: (@Sendable (EngineLoadState) -> Void)?
+    private var partialHandler: (@Sendable (String) -> Void)?
     private var socket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     /// Text assembled from the transcription events.
@@ -32,6 +33,10 @@ actor OpenAIRealtimeService: LiveSpeechEngine {
 
     func setStateHandler(_ handler: @escaping @Sendable (EngineLoadState) -> Void) {
         stateHandler = handler
+    }
+
+    func setPartialHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        partialHandler = handler
     }
 
     func preload() async {
@@ -170,9 +175,13 @@ actor OpenAIRealtimeService: LiveSpeechEngine {
     private func handle(type: String, event: [String: Any]) {
         switch type {
         case "conversation.item.input_audio_transcription.delta":
-            if let delta = event["delta"] as? String { transcript += delta }
+            if let delta = event["delta"] as? String {
+                transcript += delta
+                publishPartial()
+            }
         case "conversation.item.input_audio_transcription.completed":
             if let final = event["transcript"] as? String, !final.isEmpty { transcript = final }
+            publishPartial()
             if let continuation = completion {
                 completion = nil
                 continuation.resume(returning: transcript)
@@ -184,6 +193,12 @@ actor OpenAIRealtimeService: LiveSpeechEngine {
         default:
             break
         }
+    }
+
+    private func publishPartial() {
+        let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        partialHandler?(text)
     }
 
     private func finishWithFailure(_ error: Error) {

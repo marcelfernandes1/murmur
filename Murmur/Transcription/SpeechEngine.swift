@@ -30,12 +30,21 @@ protocol SpeechEngine: Sendable {
 extension SpeechEngine {
     /// What every local Whisper-family model expects.
     nonisolated var inputSampleRate: Int { 16_000 }
+    /// Called when recording starts. Cloud engines use it to get the TLS
+    /// handshake out of the way while the user is still talking, instead of
+    /// paying for it after they stop. No-op for local engines.
+    func warmUp() async {}
 }
 
 /// An engine that transcribes *while* the user is still speaking, so the text is
 /// ready the moment they release the trigger. The controller pumps audio in as
 /// it is captured and asks for the final transcript at commit.
 protocol LiveSpeechEngine: SpeechEngine {
+    /// Called with the transcript-so-far every time the server sends more of it,
+    /// so the UI can show the words appearing while the user is still speaking.
+    /// Without this the streaming is invisible: the text is being produced live
+    /// on the wire but the user sees nothing until they release the trigger.
+    func setPartialHandler(_ handler: @escaping @Sendable (String) -> Void) async
     func beginLive(language: String?, vocabulary: [String]) async
     /// Newly captured samples, in order, at `inputSampleRate`.
     func appendLive(_ samples: [Float]) async

@@ -170,6 +170,21 @@ final class AudioRecorder: @unchecked Sendable {
         snapshot()
     }
 
+    /// Only the samples captured since `index`, plus the new total count.
+    ///
+    /// The streaming pumps used to call `currentSamples()` several times a
+    /// second, which copies the WHOLE take every time — O(n²) over a dictation,
+    /// and it leaves a second reference alive so the next append on the audio
+    /// render thread has to deep-copy the entire buffer. This copies only the
+    /// new tail and never outlives the lock.
+    func samples(from index: Int) -> (samples: [Float], total: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        let total = samples.count
+        guard index < total else { return ([], total) }
+        return (Array(samples[max(0, index)..<total]), total)
+    }
+
     /// Stops capture and returns everything recorded so far. `reason` is logged so a
     /// premature stop can be attributed to its true call site.
     @discardableResult
