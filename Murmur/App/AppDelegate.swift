@@ -33,15 +33,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState: appState,
         dictation: dictation
     )
+    private lazy var whatsNewWindow = WhatsNewWindowController(
+        prefs: preferences,
+        dictation: dictation
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         dictation.bootstrap()
 
         // First launch: run the welcome flow (permissions + a live practice).
+        // Afterwards, show What's New once per update. A fresh install stamps the
+        // current version so it never gets both — the welcome flow already covers
+        // everything the release notes would say.
         if !preferences.hasCompletedOnboarding {
             onboardingWindow.show()
             preferences.hasCompletedOnboarding = true
+        } else if ProcessInfo.processInfo.environment["MURMUR_PREVIEW_WHATSNEW"] != nil {
+            whatsNewWindow.show(releases: ReleaseNotes.all)
+        } else {
+            let releases = ReleaseNotes.releases(newerThan: preferences.lastSeenVersion)
+            if !releases.isEmpty { whatsNewWindow.show(releases: releases) }
         }
+        preferences.lastSeenVersion = ReleaseNotes.currentVersion
     }
 
     func showHistory() {

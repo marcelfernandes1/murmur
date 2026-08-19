@@ -208,6 +208,13 @@ final class Preferences {
         }
     }
 
+    /// Marketing version of the last build this user actually opened. Drives the
+    /// What's New window: empty means a fresh install (which gets onboarding
+    /// instead), and anything older than the running version means they updated.
+    var lastSeenVersion: String {
+        didSet { defaults.set(lastSeenVersion, forKey: Keys.lastSeenVersion) }
+    }
+
     var hasCompletedOnboarding: Bool {
         didSet { defaults.set(hasCompletedOnboarding, forKey: Keys.onboarded) }
     }
@@ -258,6 +265,7 @@ final class Preferences {
             : defaults.bool(forKey: Keys.autoLearn)
         launchAtLogin = (SMAppService.mainApp.status == .enabled)
         hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)
+        lastSeenVersion = defaults.string(forKey: Keys.lastSeenVersion) ?? ""
         accentTheme = AccentTheme(rawValue: defaults.string(forKey: Keys.accentTheme) ?? "") ?? .blue
 
         // Apple's on-device cleanup was removed (too slow). Rewrite any stale or
@@ -283,6 +291,7 @@ final class Preferences {
         static let cleanupModel = "cleanupModel"
         static let autoLearn = "autoLearnFromEdits"
         static let onboarded = "hasCompletedOnboarding"
+        static let lastSeenVersion = "lastSeenVersion"
         static let accentTheme = "accentTheme"
         static let migratedTurboV2 = "migratedToTurboV2"
         /// One-time gate: force everyone to the new whisper.cpp Turbo default once.
