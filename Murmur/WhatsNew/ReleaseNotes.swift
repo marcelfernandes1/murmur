@@ -24,6 +24,18 @@ enum ReleaseNotes {
     /// Newest first.
     static let all: [Release] = [
         Release(
+            version: "0.5.6",
+            headline: "Learned names work with short context words",
+            highlights: [
+                Highlight(icon: "text.badge.checkmark",
+                          title: "Recognizes context such as API",
+                          detail: "After you teach a correction such as WAP → Whop, short context words such as API can help Murmur use it in the right sentence. Common filler words still cannot authorize a replacement."),
+                Highlight(icon: "pencil",
+                          title: "Clearer relearning instructions",
+                          detail: "Paused entries need one new edit in a dictated sentence. Turning learning on alone does not activate them. Settings now explains how to teach them again.")
+            ]
+        ),
+        Release(
             version: "0.5.5",
             headline: "Learned words with fewer unwanted replacements",
             highlights: [

@@ -100,7 +100,10 @@ struct LearningPlan: Sendable {
         let tokens = CorrectionDetector.tokens(in: original)
         func anchors(_ words: [String]) -> Set<String> {
             Set(words.map { $0.lowercased() }.filter {
-                $0.count >= 4 && !Self.contextStopWords.contains($0)
+                // Short content words (API, SDK, tax, app) can be the only
+                // useful evidence next to a name. Filter function words by
+                // meaning rather than discarding every three-letter anchor.
+                $0.count >= 3 && !Self.contextStopWords.contains($0)
             })
         }
         return Set(proposals.compactMap { proposal in
@@ -120,6 +123,8 @@ struct LearningPlan: Sendable {
         really please today tomorrow yesterday later before after again next last first every some any
         more most only also even still already always never when where what which while because though
         and the for you your our its it's now not use using used want need make made going get gets got
+        all are but can did had has how let off out say she her him his too was who why yet
+        com das dos ela ele nas nos nao não por que sem sim tem ter
         isso isto esse essa estes estas como para pela pelo pelas pelos uma umas uns voce você voces vocês
         hoje ontem amanha amanhã depois antes muito mais menos tudo todos todas quando onde porque
         """.split(whereSeparator: \.isWhitespace).map(String.init))
