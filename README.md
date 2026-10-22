@@ -6,17 +6,18 @@ Hold a key, speak, and your words are typed into whatever app you're in (or copi
 
 ## Features
 - **Push-to-talk** — hold the **Fn / 🌐 key** (or your own shortcut) to dictate.
-- **Two speech engines** (switch in Settings):
+- **Local and cloud speech engines** (switch in Settings):
   - **Parakeet TDT 0.6B v3** (NVIDIA, via FluidAudio) — blazing fast, multilingual.
   - **Whisper** (via WhisperKit) — tiny → large-v3-turbo, with custom vocabulary + language pinning.
+  - **OpenAI** — optional file or live transcription using your API key.
 - **Smart cleanup (local LLM)** — an optional on-device Llama/Qwen pass (llama.cpp / Metal GPU) that removes filler words ("um", "uh"), deletes false starts, turns spoken numbers into digits ("twenty twenty six" → "2026"), and fixes punctuation — like Wispr Flow's formatting, but offline.
 - **Notch animation** — a live waveform flows from the MacBook notch while you talk.
 - **History** — searchable list of past transcripts; click to re-copy.
 - **Menu-bar app** — no Dock icon.
 
 ## Requirements
-- **Apple Silicon Mac** (M1 or newer), **macOS 14+**
-- **Xcode 15+** (free, from the Mac App Store)
+- **Apple Silicon Mac** (M1 or newer), **macOS 26+**
+- **Xcode 26+** (free, from the Mac App Store)
 
 ## Install (build it yourself in Xcode)
 1. **Clone the repo:**

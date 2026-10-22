@@ -67,7 +67,7 @@ if ! security find-identity -v -p codesigning | grep -q "$DEV_ID_CERT"; then
   exit 1
 fi
 command -v create-dmg >/dev/null || { echo "error: create-dmg not found (brew install create-dmg)" >&2; exit 1; }
-command -v xcodegen   >/dev/null && xcodegen generate >/dev/null
+# Build the reviewed, committed project; do not regenerate it during release.
 
 VERSION="$(grep -E '^[[:space:]]*MARKETING_VERSION:' project.yml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
 BUILD="$(grep -E '^[[:space:]]*CURRENT_PROJECT_VERSION:' project.yml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
@@ -107,7 +107,10 @@ rm -rf "$BUILD_DIR"; mkdir -p "$BUILD_DIR" "$DIST_DIR"
 
 # --- Archive (Release, Developer ID) --------------------------------------
 echo "==> Archiving…"
-xcodebuild archive \
+build_cache_args=()
+[[ -n "${MURMUR_DERIVED_DATA:-}" ]] && build_cache_args+=(-derivedDataPath "$MURMUR_DERIVED_DATA")
+[[ -n "${MURMUR_SOURCE_PACKAGES:-}" ]] && build_cache_args+=(-clonedSourcePackagesDirPath "$MURMUR_SOURCE_PACKAGES")
+xcodebuild archive "${build_cache_args[@]}" -disableAutomaticPackageResolution \
   -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
   -archivePath "$ARCHIVE" \
   CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$DEV_ID_CERT" \
@@ -210,10 +213,10 @@ spctl -a -vv -t exec "$APP" 2>&1 | sed 's/^/  /' || true
 if [[ "$publish" -eq 1 ]]; then
   command -v gh >/dev/null || { echo "error: gh CLI required for --publish" >&2; exit 1; }
   echo "==> Publishing GitHub release ${TAG}…"
-  if gh release view "${TAG}" >/dev/null 2>&1; then
-    gh release upload "${TAG}" "$DMG" "$STABLE_DMG" "$DIST_DIR/appcast.xml" --clobber
+  if gh release view "${TAG}" --repo "$REPO_SLUG" >/dev/null 2>&1; then
+    gh release upload "${TAG}" --repo "$REPO_SLUG" "$DMG" "$STABLE_DMG" "$DIST_DIR/appcast.xml" --clobber
   else
-    gh release create "${TAG}" "$DMG" "$STABLE_DMG" "$DIST_DIR/appcast.xml" \
+    gh release create "${TAG}" --repo "$REPO_SLUG" "$DMG" "$STABLE_DMG" "$DIST_DIR/appcast.xml" \
       --target main --title "Murmur ${VERSION}" --generate-notes
   fi
   echo "Released: https://github.com/${REPO_SLUG}/releases/tag/${TAG}"
