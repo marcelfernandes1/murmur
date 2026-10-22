@@ -134,6 +134,25 @@ struct CorrectionLearningTests {
         expect(defaults.data(forKey: "learnedCorrections") == grouped, "migration preserves rollback data")
         expect(CorrectionStore(defaults: defaults).corrections.filter { !$0.needsContext }.count == 1, "new evidence survives reload independently")
 
+        let apiStore = freshStore()
+        let apiDictation = "Yeah, so I'm testing here and the thing is, when we build our card on file using the WAP API, I don't know why. Most of the times it doesn't go through. I don't know if it's a bank issue or what it is. You know what I mean?"
+        let apiCorrected = apiDictation.replacingOccurrences(of: "WAP", with: "Whop")
+        expect(apiStore.learn(candidate(apiDictation, apiCorrected)!) != nil, "user's WAP API edit can be learned")
+        expect(apiStore.apply(to: apiDictation, verifiedText: apiCorrected) == apiCorrected, "three-letter API context supports user's exact dictation")
+        expect(apiStore.apply(to: apiDictation, verifiedText: apiDictation) == apiCorrected, "API context resolves unchanged homophone on second listen")
+        expect(apiStore.apply(to: apiDictation) == apiDictation, "API context still requires an audio verification result")
+        let apiRepeat = apiDictation.replacingOccurrences(of: "our card", with: "their card")
+        expect(apiStore.apply(to: apiRepeat, verifiedText: apiRepeat) == apiRepeat.replacingOccurrences(of: "WAP", with: "Whop"), "nearby API context survives unrelated wording difference")
+        for phrase in ["Play the WAP song.", "Discuss the API. Play WAP next.", "We need to swap the API."] {
+            expect(apiStore.apply(to: phrase, verifiedText: phrase.replacingOccurrences(of: "WAP", with: "Whop")) == phrase, "API learning does not change unrelated speech: \(phrase)")
+        }
+        let fillerStore = freshStore()
+        for phrase in ["We say wap now.", "She has wap too.", "Ele tem wap sim."] {
+            let corrected = phrase.replacingOccurrences(of: "wap", with: "Whop")
+            _ = fillerStore.learn(candidate(phrase, corrected)!)
+            expect(fillerStore.apply(to: phrase, verifiedText: corrected) == phrase, "short function words cannot authorize homophone: \(phrase)")
+        }
+
         let undoStore = freshStore()
         let first = undoStore.learn(cloud)!
         let second = undoStore.learn(candidate("we use cloud every day", "we use Claude every day")!)!

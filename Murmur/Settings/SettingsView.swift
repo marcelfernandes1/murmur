@@ -294,7 +294,7 @@ struct SettingsView: View {
         } header: {
             Text("Auto-learn")
         } footer: {
-            Text("Fix a name or short phrase in dictated text to teach Murmur its spelling. When that mishearing returns, Murmur listens again with the relevant names before making a correction. Corrections also need a nearby context word you taught it. Uncertain results stay unchanged. Removed corrections stay ignored until you allow learning again. Needs Accessibility.")
+            Text("To activate a paused entry, leave learning on, dictate a full sentence, then fix the name in that text within 30 seconds. Keep the same text field focused for about 4 seconds until you see ‘Learned’. Turning this switch on alone does not activate paused entries. Murmur checks the recording and nearby context before using a learned spelling. Uncertain results stay unchanged. Needs Accessibility.")
         }
 
         Section("Learned") {
