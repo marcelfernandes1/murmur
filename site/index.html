@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Murmur — Talk. It types. Everywhere on your Mac.</title>
-<meta name="description" content="Murmur is a 100% on-device dictation app for macOS. Hold one key, speak, and your words are typed into any app — instantly, privately, offline. No cloud. No subscription." />
+<meta name="description" content="Murmur turns speech into text across your Mac. Choose offline recognition or optional OpenAI transcription, with careful word learning and local cleanup. Free and open source." />
 <meta name="theme-color" content="#060509" />
 <script>document.documentElement.className+=' js';</script>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -325,7 +325,7 @@ header.nav.scrolled .nav-inner{
 .flow .node.blocked{position:relative;border-color:rgba(255,90,90,.25)}
 .flow .node.blocked .ic{color:#ff6b6b}
 .flow .node.blocked::after{
-  content:"✕ never";position:absolute;top:-11px;left:50%;transform:translateX(-50%);
+  content:"local mode";position:absolute;top:-11px;left:50%;transform:translateX(-50%);
   font-size:10px;font-weight:700;letter-spacing:.05em;color:#ff7a7a;
   background:#1a0c10;border:1px solid rgba(255,90,90,.3);padding:3px 9px;border-radius:980px;
 }
@@ -493,7 +493,7 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
       <span class="line">Talk. It types.</span>
       <span class="line"><span class="gtext">Everywhere.</span></span>
     </h1>
-    <p class="sub">Hold one key and speak. Murmur turns your voice into text in any app — instantly, and entirely on your Mac. No cloud. No account. No one listening but you.</p>
+    <p class="sub">Hold one key and speak. Murmur types your words into the app you’re using. Choose an offline model to keep audio on your Mac, or connect OpenAI for cloud transcription.</p>
     <div class="cta-row">
       <a href="https://github.com/marcelfernandes1/murmur/releases/latest/download/Murmur.dmg" class="btn btn-primary btn-lg" download>
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.36 1.43c.04 1.05-.34 2.09-1.02 2.86-.7.8-1.85 1.42-2.96 1.33-.05-1.05.4-2.13 1.04-2.84.72-.81 1.96-1.4 2.94-1.35zM20.5 17.3c-.55 1.27-.81 1.84-1.52 2.96-.99 1.57-2.39 3.53-4.12 3.54-1.54.02-1.94-1-4.03-.99-2.09.01-2.53 1.01-4.07.99-1.73-.02-3.06-1.78-4.05-3.35C-.06 16.07-.36 10.9 1.36 8.15c1.22-1.96 3.16-3.1 4.98-3.1 1.85 0 3.02 1.02 4.55 1.02 1.49 0 2.4-1.02 4.54-1.02 1.62 0 3.34.88 4.56 2.4-4.01 2.2-3.36 7.92.51 9.85z"/></svg>
@@ -506,8 +506,8 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
     </div>
     <div class="trust">
       <span>Free &amp; open source</span><span class="sep"></span>
-      <span>Apple Silicon · macOS 14+</span><span class="sep"></span>
-      <span>Works fully offline</span>
+      <span>Apple Silicon · macOS 26+</span><span class="sep"></span>
+      <span>Offline mode available</span>
     </div>
 
     <!-- THE STAGE -->
@@ -551,14 +551,30 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
   </div>
 </section>
 
+<!-- ===================== RELEASE ===================== -->
+<section class="sec" id="whats-new" style="padding-bottom:20px">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="dot"></span> New in Murmur 0.5.5</span>
+      <h2>Learned words.<br/>Fewer unwanted changes.</h2>
+      <p>Names and specialist terms should help your dictation. This update checks the recording and nearby context before using a learned spelling, including split words such as “fan basis” → “Fanbasis”.</p>
+    </div>
+    <div class="card">
+      <h3>Already using Murmur?</h3>
+      <p>Open the Murmur menu and choose <strong>Check for Updates…</strong>. Your old learned entries are saved but paused: correct a name in a full dictated sentence to teach its context again. You can remove a correction in Settings → Learned; it stays ignored until you allow learning again.</p>
+      <p style="margin-top:16px">This release also includes the capture, long-recording, and reliability fixes since 0.5.3. <a href="https://github.com/marcelfernandes1/murmur/releases/tag/v0.5.5" style="text-decoration:underline">Read the release notes</a>.</p>
+    </div>
+  </div>
+</section>
+
 <!-- ===================== PRIVACY ===================== -->
 <section class="sec privacy" id="privacy">
   <div class="wrap">
     <div class="lock" data-reveal>
       <svg viewBox="0 0 24 24" fill="none" stroke="url(#plg)" stroke-width="1.8"><defs><linearGradient id="plg" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#7B6CF5"/><stop offset="1" stop-color="#C24BDC"/></linearGradient></defs><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.6" fill="url(#plg)" stroke="none"/></svg>
     </div>
-    <h2 data-reveal data-d="1">Your voice never leaves<br/>your Mac.</h2>
-    <p class="lede" data-reveal data-d="2">Cloud dictation streams everything you say to someone else's servers. Murmur runs the entire pipeline — recording, transcription, and AI cleanup — on the Apple Neural Engine, right on your machine. Turn off Wi-Fi and it still works perfectly.</p>
+    <h2 data-reveal data-d="1">Your voice. Your choice.<br/>Keep it on your Mac.</h2>
+    <p class="lede" data-reveal data-d="2">Choose a local Parakeet or Whisper model to transcribe and clean up speech on your Mac. After the models download, local mode works without Wi-Fi. Optional OpenAI modes send audio to OpenAI using your API key; provider usage charges apply.</p>
 
     <div class="flow" data-reveal data-d="2">
       <div class="node">
@@ -569,7 +585,7 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
       <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h15M14 7l5 5-5 5"/></svg></div>
       <div class="node">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="4"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg></div>
-        <div class="t">Neural Engine</div>
+        <div class="t">Local model</div>
         <div class="s">On-device transcribe + clean</div>
       </div>
       <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h15M14 7l5 5-5 5"/></svg></div>
@@ -582,7 +598,7 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
       <div class="node blocked">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 10h1a4 4 0 0 1 0 8H7a5 5 0 0 1-1-9.9A6 6 0 0 1 17.7 9"/></svg></div>
         <div class="t">The cloud</div>
-        <div class="s">0 bytes uploaded</div>
+        <div class="s">No audio sent in local mode</div>
       </div>
     </div>
   </div>
@@ -593,13 +609,13 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
   <div class="wrap">
     <div class="sec-head">
       <span class="eyebrow"><span class="dot"></span> Built for Apple Silicon</span>
-      <h2>Faster than you can type.<br/>By a lot.</h2>
-      <p>You think at 150 words a minute and type at 40. Murmur closes the gap — transcription runs on the Neural Engine in a fraction of real time, so your words appear almost as fast as you say them.</p>
+      <h2>Speak at your own pace.<br/>Keep your hands free.</h2>
+      <p>Dictate messages, documents, and ideas without switching apps. Choose the recognition model that fits your Mac, language, and workflow.</p>
     </div>
     <div class="stats">
-      <div class="stat" data-reveal data-d="1"><div class="num gtext" data-count="3" data-suffix="×">3×</div><div class="lab">faster than typing,<br/>on average</div></div>
-      <div class="stat" data-reveal data-d="2"><div class="num gtext" data-count="0.2" data-suffix="" data-dec="1">0.2</div><div class="lab">real-time factor<br/>on M-series chips</div></div>
-      <div class="stat" data-reveal data-d="3"><div class="num gtext" data-count="100" data-suffix="+">100+</div><div class="lab">languages with the<br/>Parakeet engine</div></div>
+      <div class="stat" data-reveal data-d="1"><div class="num gtext">Fn</div><div class="lab">hold to speak,<br/>release to insert</div></div>
+      <div class="stat" data-reveal data-d="2"><div class="num gtext">Local</div><div class="lab">offline speech<br/>recognition</div></div>
+      <div class="stat" data-reveal data-d="3"><div class="num gtext">Cloud</div><div class="lab">optional OpenAI<br/>transcription</div></div>
       <div class="stat" data-reveal data-d="4"><div class="num gtext" data-count="0" data-suffix="$">$0</div><div class="lab">forever — free and<br/>open source</div></div>
     </div>
   </div>
@@ -609,7 +625,7 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
 <section class="sec" id="features" style="padding-top:30px">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow"><span class="dot"></span> Everything, on-device</span>
+      <span class="eyebrow"><span class="dot"></span> Made for your Mac</span>
       <h2>A dictation app that<br/>actually feels native.</h2>
       <p>No menus to learn, no dock icon, no monthly bill. Just a key, your voice, and a few quiet touches that make it disappear into your workflow.</p>
     </div>
@@ -626,8 +642,8 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
       <div class="card third" data-reveal data-d="2">
         <span class="spark"></span>
         <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2L4.5 13H11l-1 9 8.5-11H12l1-9z"/></svg></div>
-        <h3>Two speech engines</h3>
-        <p>Pick blazing-fast multilingual Parakeet, or Whisper for maximum accuracy with custom vocabulary and language pinning.</p>
+        <h3>Choose your speech engine</h3>
+        <p>Use local Parakeet or Whisper models, or connect OpenAI for file and live transcription. Switch engines in Settings.</p>
       </div>
       <!-- notch -->
       <div class="card third" data-reveal data-d="1">
@@ -641,7 +657,7 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
         <span class="spark"></span>
         <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a6 6 0 0 1 6 6c0 2-1 3-2 4s-1 2-1 3H9c0-1 0-2-1-3s-2-2-2-4a6 6 0 0 1 6-6z"/><path d="M9 20h6M10 23h4"/></svg></div>
         <h3>Learns your words</h3>
-        <p>Fix a name or bit of jargon once and Murmur remembers it — quietly adding it to your personal vocabulary so it gets the spelling right next time.</p>
+        <p>Correct a name or short phrase in dictated text. Murmur remembers the spelling and context, then checks the recording before applying it again. Removed corrections stay ignored.</p>
       </div>
       <!-- history -->
       <div class="card third" data-reveal data-d="1">
@@ -669,7 +685,7 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
         <span class="spark"></span>
         <div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16z"/><path d="M2 12h20"/><path d="M5 18L19 6"/></svg></div>
         <h3>Works on a plane</h3>
-        <p>No internet, no API keys, no subscription. Once the model is downloaded, everything runs offline, forever.</p>
+        <p>Choose a local engine and download its model once. Local transcription and cleanup then work without internet or an API key.</p>
       </div>
     </div>
   </div>
@@ -717,7 +733,7 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
         <span class="n">STEP 02</span>
         <div class="big"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="url(#slg)" stroke-width="1.8"><defs><linearGradient id="slg" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#7B6CF5"/><stop offset="1" stop-color="#C24BDC"/></linearGradient></defs><path d="M12 3a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
         <h3>Just talk</h3>
-        <p>Speak naturally, at your own pace. A live waveform shows Murmur hearing every word, on-device.</p>
+        <p>Speak naturally, at your own pace. A live waveform shows Murmur listening while you speak.</p>
       </div>
       <div class="step" data-reveal data-d="3">
         <span class="n">STEP 03</span>
@@ -733,7 +749,7 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
 <section class="final" id="download">
   <div class="wrap">
     <h2 data-reveal>Stop typing.<br/><span class="gtext">Start talking.</span></h2>
-    <p data-reveal data-d="1">Free, open source, and 100% private. Download Murmur and give your fingers a rest.</p>
+    <p data-reveal data-d="1">Free and open source, with offline recognition available. Download Murmur 0.5.5 and give your fingers a rest.</p>
     <div class="cta-row" data-reveal data-d="2">
       <a href="https://github.com/marcelfernandes1/murmur/releases/latest/download/Murmur.dmg" class="btn btn-primary btn-lg" download>
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.36 1.43c.04 1.05-.34 2.09-1.02 2.86-.7.8-1.85 1.42-2.96 1.33-.05-1.05.4-2.13 1.04-2.84.72-.81 1.96-1.4 2.94-1.35zM20.5 17.3c-.55 1.27-.81 1.84-1.52 2.96-.99 1.57-2.39 3.53-4.12 3.54-1.54.02-1.94-1-4.03-.99-2.09.01-2.53 1.01-4.07.99-1.73-.02-3.06-1.78-4.05-3.35C-.06 16.07-.36 10.9 1.36 8.15c1.22-1.96 3.16-3.1 4.98-3.1 1.85 0 3.02 1.02 4.55 1.02 1.49 0 2.4-1.02 4.54-1.02 1.62 0 3.34.88 4.56 2.4-4.01 2.2-3.36 7.92.51 9.85z"/></svg>
@@ -746,8 +762,8 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
     </div>
     <div class="req" data-reveal data-d="3">
       <span>✓ Apple Silicon (M1+)</span>
-      <span>✓ macOS 14 or later</span>
-      <span>✓ No account required</span>
+      <span>✓ macOS 26 or later</span>
+      <span>✓ No account needed for local mode</span>
     </div>
   </div>
 </section>
@@ -760,13 +776,14 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
       Murmur
     </a>
     <div class="links">
+      <a href="#whats-new">What’s new</a>
       <a href="#privacy">Privacy</a>
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
       <a href="https://github.com/marcelfernandes1/murmur">GitHub</a>
       <a href="https://github.com/marcelfernandes1/murmur/releases/latest/download/Murmur.dmg" download>Download</a>
     </div>
-    <p class="copy">A fast, 100% on-device dictation app for macOS. Your voice stays yours. © 2026 Murmur.</p>
+    <p class="copy">Dictation for macOS, with local and optional cloud recognition. © 2026 Murmur.</p>
   </div>
 </footer>
 

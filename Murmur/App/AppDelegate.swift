@@ -39,6 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if let fixtures = ProcessInfo.processInfo.environment["MURMUR_LEARNING_AUDIO_TESTS"] {
+            Task { exit(Int32(await WhisperCppService.runLearningAudioTests(fixtures: fixtures))) }
+            return
+        }
+        #endif
         dictation.bootstrap()
 
         // First launch: run the welcome flow (permissions + a live practice).

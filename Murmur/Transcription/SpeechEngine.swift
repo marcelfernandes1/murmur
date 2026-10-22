@@ -25,6 +25,43 @@ protocol SpeechEngine: Sendable {
     ///   - language: ISO code to force, or nil to auto-detect (engines may ignore).
     ///   - vocabulary: custom terms to bias toward (engines may ignore).
     func transcribe(_ samples: [Float], language: String?, vocabulary: [String]) async throws -> String
+    /// A fresh recognition of the same audio with only the retrieved candidates.
+    func verifyLearning(_ samples: [Float], language: String?, hints: [String]) async throws -> String
+    func transcribePersonalized(_ samples: [Float], language: String?, vocabulary: [String], corrections: [LearnedCorrection]) async throws -> PersonalizedTranscript
+}
+
+struct PersonalizedTranscript: Sendable {
+    let text: String
+    let original: String
+    let applications: [LearningApplication]
+}
+
+extension SpeechEngine {
+
+    /// Preserve the engine's complete first pass. Engines with timed segments
+    /// can override this to verify bounded regions of longer recordings.
+    func transcribePersonalized(_ samples: [Float], language: String?, vocabulary: [String],
+                                corrections: [LearnedCorrection]) async throws -> PersonalizedTranscript {
+        let original = try await transcribe(samples, language: language, vocabulary: vocabulary)
+        try Task.checkCancellation()
+        guard samples.count <= 25 * inputSampleRate else {
+            return PersonalizedTranscript(text: original, original: original, applications: [])
+        }
+        let application = try await verifyPersonalization(original, samples: samples, language: language, corrections: corrections)
+        return PersonalizedTranscript(text: application.text, original: original, applications: [application])
+    }
+
+    func verifyPersonalization(_ original: String, samples: [Float], language: String?,
+                               corrections: [LearnedCorrection]) async throws -> LearningApplication {
+        let plan = LearningPlan.make(text: original, corrections: corrections)
+        guard !plan.proposals.isEmpty,
+              let verification = try? await verifyLearning(samples, language: language, hints: plan.hints) else {
+            try Task.checkCancellation()
+            return LearningApplication(text: original, applied: [])
+        }
+        try Task.checkCancellation()
+        return plan.confirm(verifiedText: verification)
+    }
 }
 
 extension SpeechEngine {

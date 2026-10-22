@@ -54,9 +54,9 @@ struct SettingsView: View {
 
     @State private var newTerm = ""
     @State private var inputDevices: [AudioInputDevice] = []
-    @State private var editingCorrectionID: LearnedTerm.ID?
+    @State private var editingCorrectionID: LearnedCorrection.ID?
     @State private var editCorrected = ""
-    @State private var editVariants = ""
+    @State private var editHeard = ""
 
     private let setupCats: [SettingsCategory] = [.general, .dictation, .microphone, .appearance]
     private let wordCats: [SettingsCategory] = [.vocabulary, .learned]
@@ -294,56 +294,67 @@ struct SettingsView: View {
         } header: {
             Text("Auto-learn")
         } footer: {
-            Text("When you fix a name, acronym, or term in text Murmur typed, it remembers the correction and applies it next time — an exact swap, so it only ever changes the words you taught it. If a term gets misheard several ways, correct each one once; they all collect under the same entry. Needs Accessibility.")
+            Text("Fix a name or short phrase in dictated text to teach Murmur its spelling. When that mishearing returns, Murmur listens again with the relevant names before making a correction. Corrections also need a nearby context word you taught it. Uncertain results stay unchanged. Removed corrections stay ignored until you allow learning again. Needs Accessibility.")
         }
 
         Section("Learned") {
-            if corrections.terms.isEmpty {
+            if corrections.corrections.isEmpty {
                 Text("Nothing learned yet. Edit a word Murmur got wrong and it'll show up here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(corrections.terms) { term in
-                    correctionRow(term)
+                ForEach(corrections.corrections) { correction in
+                    correctionRow(correction)
+                }
+            }
+        }
+        if !corrections.ignored.isEmpty {
+            Section("Ignored corrections") {
+                ForEach(corrections.ignored) { item in
+                    HStack {
+                        Text("\(item.heard) → \(item.corrected)")
+                        Spacer()
+                        Button("Allow learning again") { corrections.allowLearning(item) }
+                    }
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func correctionRow(_ term: LearnedTerm) -> some View {
-        if editingCorrectionID == term.id {
-            VStack(alignment: .leading, spacing: 6) {
-                TextField("Corrected spelling", text: $editCorrected)
+    private func correctionRow(_ correction: LearnedCorrection) -> some View {
+        if editingCorrectionID == correction.id {
+            HStack(spacing: 6) {
+                TextField("Heard", text: $editHeard)
                     .textFieldStyle(.roundedBorder)
-                    .onSubmit { commitEdit(term) }
-                TextField("Heard as (comma-separated)", text: $editVariants)
+                    .onSubmit { commitEdit(correction) }
+                Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
+                TextField("Corrected", text: $editCorrected)
                     .textFieldStyle(.roundedBorder)
-                    .onSubmit { commitEdit(term) }
-                HStack(spacing: 6) {
-                    Spacer()
-                    Button("Cancel") { editingCorrectionID = nil }
-                    Button("Save") { commitEdit(term) }
-                        .disabled(
-                            editCorrected.trimmingCharacters(in: .whitespaces).isEmpty
-                                || parsedVariants(editVariants).isEmpty
-                        )
-                }
+                    .onSubmit { commitEdit(correction) }
+                Button("Save") { commitEdit(correction) }
+                    .disabled(
+                        editHeard.trimmingCharacters(in: .whitespaces).isEmpty
+                            || editCorrected.trimmingCharacters(in: .whitespaces).isEmpty
+                    )
+                Button("Cancel") { editingCorrectionID = nil }
             }
         } else {
             HStack(spacing: 6) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(term.corrected)
-                    Text("heard as \(term.variants.joined(separator: ", "))")
+                Text(correction.heard).foregroundStyle(.secondary)
+                Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(correction.corrected)
+                    Text(correction.usageDescription)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { startEditing(term) } label: {
+                Button { startEditing(correction) } label: {
                     Image(systemName: "pencil").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                Button { corrections.remove(term) } label: {
+                Button { corrections.remove(correction) } label: {
                     Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -458,22 +469,15 @@ struct SettingsView: View {
         newTerm = ""
     }
 
-    private func startEditing(_ term: LearnedTerm) {
-        editingCorrectionID = term.id
-        editCorrected = term.corrected
-        editVariants = term.variants.joined(separator: ", ")
+    private func startEditing(_ correction: LearnedCorrection) {
+        editingCorrectionID = correction.id
+        editHeard = correction.heard
+        editCorrected = correction.corrected
     }
 
-    private func commitEdit(_ term: LearnedTerm) {
-        corrections.update(term, corrected: editCorrected, variants: parsedVariants(editVariants))
+    private func commitEdit(_ correction: LearnedCorrection) {
+        corrections.update(correction, heard: editHeard, corrected: editCorrected)
         editingCorrectionID = nil
-    }
-
-    /// Split the comma-separated "heard as" field into trimmed, non-empty variants.
-    private func parsedVariants(_ text: String) -> [String] {
-        text.split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
     }
 
     @ViewBuilder

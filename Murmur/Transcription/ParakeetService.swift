@@ -5,6 +5,9 @@ import FluidAudio
 /// it's far faster than Whisper on long utterances. Multilingual (incl.
 /// Portuguese). Ignores the forced-language and custom-vocabulary hints.
 actor ParakeetService: SpeechEngine {
+    // Parakeet's decoder ignores prompts. Use a small multilingual local
+    // Whisper model only when an observed alias needs a second listen.
+    private let learningVerifier = WhisperCppService(fileName: "ggml-small.bin")
     private var loadTask: Task<AsrManager, Error>?
     private var stateHandler: (@Sendable (EngineLoadState) -> Void)?
 
@@ -27,6 +30,11 @@ actor ParakeetService: SpeechEngine {
     func transcribePreview(_ samples: [Float], language: String?, vocabulary: [String]) async throws -> String {
         guard !decodingFinal else { return "" }
         return try await transcribe(samples, language: language, vocabulary: vocabulary)
+    }
+
+
+    func verifyLearning(_ samples: [Float], language: String?, hints: [String]) async throws -> String {
+        try await learningVerifier.transcribe(samples, language: language, vocabulary: hints)
     }
 
     func transcribe(_ samples: [Float], language: String?, vocabulary: [String]) async throws -> String {

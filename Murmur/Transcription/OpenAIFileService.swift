@@ -59,6 +59,11 @@ actor OpenAIFileService: SpeechEngine {
         _ = try? await Self.session.data(for: request)
     }
 
+
+    func verifyLearning(_ samples: [Float], language: String?, hints: [String]) async throws -> String {
+        try await LocalLearningVerifier.shared.verify(samples, sampleRate: inputSampleRate, language: language, hints: hints)
+    }
+
     func transcribe(_ samples: [Float], language: String?, vocabulary: [String]) async throws -> String {
         guard !samples.isEmpty else { return "" }
         guard let key = APIKeyStore.load() else { throw OpenAIError.missingKey }

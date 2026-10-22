@@ -20,6 +20,11 @@ actor WhisperService: SpeechEngine {
         _ = try? await loadPipe()
     }
 
+
+    func verifyLearning(_ samples: [Float], language: String?, hints: [String]) async throws -> String {
+        try await transcribe(samples, language: language, vocabulary: hints)
+    }
+
     func transcribe(_ samples: [Float], language: String?, vocabulary: [String]) async throws -> String {
         guard !samples.isEmpty else { return "" }
         let pipe = try await loadPipe()

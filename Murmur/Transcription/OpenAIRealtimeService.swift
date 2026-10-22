@@ -132,6 +132,11 @@ actor OpenAIRealtimeService: LiveSpeechEngine {
     /// Batch entry point. The controller uses the live path for this engine; this
     /// exists so it still satisfies `SpeechEngine`, and covers the case where a
     /// take was captured before the live session came up.
+
+    func verifyLearning(_ samples: [Float], language: String?, hints: [String]) async throws -> String {
+        try await LocalLearningVerifier.shared.verify(samples, sampleRate: inputSampleRate, language: language, hints: hints)
+    }
+
     func transcribe(_ samples: [Float], language: String?, vocabulary: [String]) async throws -> String {
         if !transcript.isEmpty { return transcript.trimmingCharacters(in: .whitespacesAndNewlines) }
         await beginLive(language: language, vocabulary: vocabulary)

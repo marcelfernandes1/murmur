@@ -50,9 +50,7 @@ final class DictationController {
     private var didWarmOthers = false
     private var streamTask: Task<Void, Never>?
     private var undoClearTask: Task<Void, Never>?
-    /// The specific mishearing added by the most recent learn, so an undo removes
-    /// just that variant rather than the whole term (which may hold others).
-    private var lastLearnedVariant: String?
+    private var previousLearnedCorrection: LearnedCorrection?
     private var errorClearTask: Task<Void, Never>?
     /// The begin-recording Task (audio-unit start). Tracked so a quick release that
     /// beats a slow (e.g. Bluetooth) `recorder.start()` can defer the commit until
@@ -189,8 +187,14 @@ final class DictationController {
             Task { @MainActor in self?.handleCaptureFailure(error) }
         }
 
-        editWatcher.onCorrection = { [weak self] candidate in
-            self?.learn(candidate)
+        editWatcher.onEdit = { [weak self] candidate, applied in
+            guard let self, self.preferences.autoLearnFromEdits else { return false }
+            if self.corrections.reject(edit: candidate, applied: applied) {
+                self.appState.recentlyLearned = nil
+                self.notch.finish(message: "Correction removed")
+                return true
+            }
+            return self.learn(candidate)
         }
 
         // Sanity-check correction detection from the CLI (mirrors MURMUR_BENCH):
@@ -204,8 +208,8 @@ final class DictationController {
         let env = ProcessInfo.processInfo.environment
         if env["MURMUR_TEST_CORRECTIONS"] != nil {
             ranTests = true
-            testFailures += CorrectionDetector.runSelfTest()
-            testFailures += CorrectionStore.runSelfTest()
+            // Full learned-word suite: scripts/test-corrections.sh.
+            testFailures += LearningPlan.runSelfTest()
         }
         if env["MURMUR_TEST_CAPTURE"] != nil {
             ranTests = true
@@ -730,6 +734,7 @@ final class DictationController {
                 let vocabulary = biasVocabulary()
                 let startedAt = ContinuousClock.now
                 var text: String
+                var personalized: PersonalizedTranscript?
                 if let live = liveEngine {
                     // Already transcribed while the user was talking; this just
                     // sends the tail, commits the turn and collects the final
@@ -742,11 +747,14 @@ final class DictationController {
                     text = try await live.finishLive()
                     liveEngine = nil
                 } else {
-                    text = try await engine.transcribe(
-                        samples,
-                        language: preferences.language.code,
-                        vocabulary: vocabulary
-                    )
+                    if engine is OpenAIFileService {
+                        text = try await engine.transcribe(samples, language: preferences.language.code, vocabulary: vocabulary)
+                    } else {
+                        let result = try await engine.transcribePersonalized(samples, language: preferences.language.code,
+                                                                           vocabulary: vocabulary, corrections: corrections.corrections)
+                        personalized = result
+                        text = result.text
+                    }
                 }
                 // Time-to-text, so the engines can actually be compared rather
                 // than guessed at.
@@ -758,10 +766,20 @@ final class DictationController {
                 // in as an initial prompt, and both will happily transcribe that
                 // prompt when the speech runs out — so drop it if it comes back.
                 text = TranscriptCleaner.stripPromptEcho(text, vocabulary: vocabulary)
+                if personalized == nil {
+                    let plan = LearningPlan.make(text: text, corrections: corrections.corrections)
+                    var application = LearningApplication(text: text, applied: [])
+                    if samples.count <= 25 * engine.inputSampleRate, !plan.proposals.isEmpty,
+                       let verified = try? await engine.verifyLearning(samples, language: preferences.language.code, hints: plan.hints) {
+                        application = plan.confirm(verifiedText: verified)
+                    }
+                    personalized = PersonalizedTranscript(text: application.text, original: text, applications: [application])
+                    text = application.text
+                }
                 signposter.endInterval("transcribe", transcribeState)
                 // The exact ASR output, recorded for the comparison screen so it
                 // shows every dictation (raw vs. final) — even when nothing changed.
-                let rawTranscript = text
+                let rawTranscript = TranscriptCleaner.removeDegenerateRepeats(personalized?.original ?? text)
                 if preferences.smartCleanup {
                     notch.showPreparing("Polishing…")
                     // Strip basic fillers deterministically FIRST (instant, 100% reliable
@@ -784,13 +802,10 @@ final class DictationController {
                 // (or this one was discarded) while we were transcribing/polishing, it
                 // must not paste into the new field or overwrite fresher UI state.
                 guard !Task.isCancelled, generation == dictationGeneration else { return }
-                // Apply previously-learned corrections last, so they reliably win
-                // over whatever the recognizer/cleanup produced. Pure, bounded,
-                // in-memory — it cannot block delivery (see CorrectionStore).
-                let correctState = signposter.beginInterval("corrections")
-                text = corrections.apply(to: text)
-                signposter.endInterval("corrections", correctState)
-                deliver(text, original: rawTranscript)
+                // Cleanup may shift text. Retain only unambiguous receipts so
+                // rejecting a replacement can never retire an unrelated rule.
+                let applied = LearningPlan.relocate(personalized?.applications ?? [], into: text)
+                deliver(text, original: rawTranscript, applied: applied)
                 appState.status = .idle
                 awaitingResult = false
                 transcribeWatchdog?.cancel()
@@ -886,7 +901,7 @@ final class DictationController {
         return cases.count - passed
     }
 
-    private func deliver(_ text: String, original: String? = nil) {
+    private func deliver(_ text: String, original: String? = nil, applied: [CorrectionStore.AppliedCorrection] = []) {
         guard !text.isEmpty else {
             notch.dismiss()
             return
@@ -923,17 +938,13 @@ final class DictationController {
 
         let deliverState = signposter.beginInterval("paste")
         if canInsert {
-            // Capture the target BEFORE pasting: the watcher must diff the field
-            // we wrote to, not whatever happens to be focused a third of a second
-            // later.
-            let target = accessibility.focusedElementForEditing()
+            // Capture the target BEFORE posting ⌘V; verify that same field
+            // received this insertion before observing any subsequent edits.
+            if preferences.autoLearnFromEdits {
+                editWatcher.start(insertedText: text, pastedInto: accessibility.focusedElementForEditing(), applied: applied)
+            }
             TextInserter.paste(text)
             notch.finish(message: "Inserted")
-            // Watch the field for the user correcting a word, so we can learn it.
-            FieldEditWatcher.diag("deliver: pasted, autoLearnFromEdits=\(preferences.autoLearnFromEdits)")
-            if preferences.autoLearnFromEdits {
-                editWatcher.start(insertedText: text, pastedInto: target)
-            }
         } else {
             FieldEditWatcher.diag("deliver: NOT inserted (canInsert=false) → copied, no watcher. trusted=\(trusted) secureInput=\(secureInput) editableFocused=\(editableFocused)")
             TextInserter.copyToClipboard(text)
@@ -952,12 +963,12 @@ final class DictationController {
 
     // MARK: - Learning from edits
 
-    /// The recognizer bias list: manual vocabulary plus every learned spelling,
-    /// de-duplicated (case-insensitive), original order preserved.
+    /// Only explicitly supplied vocabulary biases recognition. Automatically
+    /// learned edits must not increase a word's probability in unrelated audio.
     private func biasVocabulary() -> [String] {
         var seen = Set<String>()
         var out: [String] = []
-        for term in vocabulary.terms + corrections.biasTerms {
+        for term in vocabulary.terms {
             let key = term.lowercased()
             guard !term.isEmpty, !seen.contains(key) else { continue }
             seen.insert(key)
@@ -967,16 +978,11 @@ final class DictationController {
     }
 
     /// Store a detected correction and flash a "Learned <term>" confirmation,
-    /// keeping it briefly undoable from the menu. A `nil` return means the edit was
-    /// a revert of one of our own replacements (the store forgot that variant
-    /// instead of learning its inverse) — nothing to celebrate or undo.
-    private func learn(_ candidate: CorrectionDetector.Candidate) {
-        FieldEditWatcher.diag("learn: storing “\(candidate.heard)” → “\(candidate.corrected)” + flashing notch")
-        guard let entry = corrections.learn(heard: candidate.heard, corrected: candidate.corrected) else {
-            FieldEditWatcher.diag("learn: treated as a revert / no-op — nothing learned")
-            return
-        }
-        lastLearnedVariant = candidate.heard
+    /// keeping it briefly undoable from the menu.
+    private func learn(_ candidate: CorrectionDetector.Candidate) -> Bool {
+        let previous = corrections.corrections.first { $0.id == CorrectionDetector.normalized(candidate.heard) }
+        guard let entry = corrections.learn(candidate) else { return false }
+        previousLearnedCorrection = previous
         appState.recentlyLearned = entry
         notch.showLearned(entry.corrected)
 
@@ -986,6 +992,7 @@ final class DictationController {
             guard let self, self.appState.recentlyLearned == entry else { return }
             self.appState.recentlyLearned = nil
         }
+        return true
     }
 
     /// Undo the most recently learned word (invoked from the menu). Removes just
@@ -993,13 +1000,9 @@ final class DictationController {
     /// keeps them; the term is dropped only if that was its last variant.
     func undoLastLearned() {
         guard let entry = appState.recentlyLearned else { return }
-        if let variant = lastLearnedVariant {
-            corrections.removeVariant(variant, from: entry)
-        } else {
-            corrections.remove(entry)
-        }
-        lastLearnedVariant = nil
+        corrections.undoLearning(entry, previous: previousLearnedCorrection)
+        previousLearnedCorrection = nil
         appState.recentlyLearned = nil
-        notch.finish(message: "Removed “\(entry.corrected)”")
+        notch.finish(message: "Learning undone")
     }
 }

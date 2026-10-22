@@ -62,12 +62,58 @@ actor WhisperCppService: SpeechEngine {
         _ = try? await loadModel()
     }
 
+
+    func verifyLearning(_ samples: [Float], language: String?, hints: [String]) async throws -> String {
+        try await transcribe(samples, language: language, vocabulary: hints)
+    }
+
     func transcribe(_ samples: [Float], language: String?, vocabulary: [String]) async throws -> String {
         guard !samples.isEmpty else { return "" }
         let model = try await loadModel()
         // Synchronous inside the actor: serializes calls (whisper_full is not
         // reentrant on a shared context) and never touches the main thread.
         return try decode(samples, model: model, language: language, vocabulary: vocabulary)
+            .map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    func transcribePersonalized(_ samples: [Float], language: String?, vocabulary: [String],
+                                corrections: [LearnedCorrection]) async throws -> PersonalizedTranscript {
+        guard !samples.isEmpty else { return PersonalizedTranscript(text: "", original: "", applications: []) }
+        let model = try await loadModel()
+        // Keep the full decode and coverage recovery intact. Timestamps, never
+        // text overlap guesses, locate the audio for optional verification.
+        let segments = try decode(samples, model: model, language: language, vocabulary: vocabulary)
+            .filter { !$0.text.isEmpty }
+        let original = segments.map(\.text).joined(separator: " ")
+        guard corrections.contains(where: { !$0.needsContext }) else {
+            return PersonalizedTranscript(text: original, original: original, applications: [])
+        }
+        if samples.count <= 25 * Self.sampleRate {
+            let application = try await verifyPersonalization(original, samples: samples, language: language, corrections: corrections)
+            return PersonalizedTranscript(text: application.text, original: original, applications: [application])
+        }
+        var applications: [LearningApplication] = []
+        var cursor = 0, checks = 0
+        while cursor < segments.count {
+            try Task.checkCancellation()
+            let first = cursor
+            cursor += 1
+            while cursor < segments.count, segments[cursor].end - segments[first].start <= 24 {
+                cursor += 1
+            }
+            let text = segments[first..<cursor].map(\.text).joined(separator: " ")
+            let start = DecodeCoverage.clamp(segments[first].start, within: samples.count)
+            let end = DecodeCoverage.clamp(segments[cursor - 1].end, within: samples.count)
+            if checks < 8, end > start, end - start <= 25 * Self.sampleRate,
+               !LearningPlan.make(text: text, corrections: corrections).proposals.isEmpty {
+                checks += 1
+                applications.append(try await verifyPersonalization(text, samples: Array(samples[start..<end]),
+                                                                      language: language, corrections: corrections))
+            } else {
+                applications.append(LearningApplication(text: text, applied: []))
+            }
+        }
+        return PersonalizedTranscript(text: applications.map(\.text).joined(separator: " "), original: original, applications: applications)
     }
 
     /// Decode the take, then verify the decode actually covered it. Any
@@ -77,7 +123,7 @@ actor WhisperCppService: SpeechEngine {
     private func decode(_ samples: [Float],
                         model: WhisperModel,
                         language: String?,
-                        vocabulary: [String]) throws -> String {
+                        vocabulary: [String]) throws -> [WhisperSegment] {
         guard var segments = model.transcribe(samples: samples, language: language, vocabulary: vocabulary) else {
             throw WhisperCppError.inferenceFailed
         }
@@ -135,7 +181,7 @@ actor WhisperCppService: SpeechEngine {
             Self.log.log("dropped \(segments.count - trimmed.count, privacy: .public) fabricated trailing segment(s) sitting on silence")
         }
 
-        return trimmed.map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
+        return trimmed
     }
 
     private func loadModel() async throws -> WhisperModel {
@@ -226,6 +272,56 @@ private extension WhisperCppService {
         } else {
             try? data.write(to: url)
         }
+    }
+}
+#endif
+
+#if DEBUG
+import AVFoundation
+
+extension WhisperCppService {
+    /// Explicit developer-only fixture runner; never records, pastes, or writes
+    /// the user's vocabulary. Outputs synthetic fixture text only.
+    static func runLearningAudioTests(fixtures: String) async -> Int {
+        struct Fixture: Decodable { let path: String; let contains: String; let excludes: [String] }
+        var failures = 0
+        do {
+            let cases = try JSONDecoder().decode([Fixture].self, from: Data(contentsOf: URL(fileURLWithPath: fixtures)))
+            let context = CorrectionDetector.Context(before: ["payment", "through"], after: ["for", "subscriptions"])
+            let corrections = ["wap", "womp", "wop", "wapt"].map {
+                LearnedCorrection(heard: $0, corrected: "Whop", createdAt: Date(), contexts: [context])
+            } + [LearnedCorrection(heard: "fan basis", corrected: "Fanbasis", createdAt: Date(), contexts: [context])]
+            let engine = WhisperCppService(fileName: ProcessInfo.processInfo.environment["MURMUR_TEST_MODEL"] ?? "ggml-large-v3.bin")
+            for fixture in cases {
+                let file = try AVAudioFile(forReading: URL(fileURLWithPath: fixture.path))
+                guard file.processingFormat.sampleRate == 16_000, file.processingFormat.channelCount == 1,
+                      let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) else { return 1 }
+                try file.read(into: buffer)
+                guard let channel = buffer.floatChannelData?[0] else { return 1 }
+                let audio = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+                let result = try await engine.transcribePersonalized(audio, language: "en", vocabulary: [], corrections: corrections)
+                let pass = result.text.localizedCaseInsensitiveContains(fixture.contains)
+                    && !fixture.excludes.contains(where: { result.text.localizedCaseInsensitiveContains($0) })
+                if !pass { failures += 1 }
+                print("[LearningAudio] \(pass ? "PASS" : "FAIL") \(URL(fileURLWithPath: fixture.path).lastPathComponent) raw=\(result.original) final=\(result.text)")
+                fflush(stdout)
+            }
+            for (text, replace) in [
+                ("Send the payment through WAP today.", true),
+                ("Play the song WAP next.", false),
+                ("I am listening to WAP by Cardi B.", false),
+                ("Send payment through fan basis today.", true),
+                ("The band has a growing fan basis around the world.", false)
+            ] {
+                let plan = LearningPlan.make(text: text, corrections: corrections)
+                let changed = plan.confirm(verifiedText: text).text != text
+                if changed != replace { failures += 1 }
+                print("[LearningContext] \(changed == replace ? "PASS" : "FAIL") replace=\(changed) \(text)")
+                fflush(stdout)
+            }
+        } catch { print("[LearningAudio] ERROR \(error)"); return 1 }
+        print("[LearningAudio] failures=\(failures)")
+        return failures
     }
 }
 #endif
