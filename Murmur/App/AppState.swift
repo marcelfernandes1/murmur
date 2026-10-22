@@ -46,7 +46,7 @@ final class AppState {
 
     /// The term just auto-learned from an edit, kept briefly so the menu can
     /// offer an undo. Cleared after a short window or once undone.
-    var recentlyLearned: LearnedTerm?
+    var recentlyLearned: LearnedCorrection?
 
     var versionString: String {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"

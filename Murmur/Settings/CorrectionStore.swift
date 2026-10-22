@@ -1,452 +1,338 @@
 import Foundation
 import Observation
 
-/// One learned term: the spelling the user wants (`corrected`) plus every
-/// mis-hearing the recognizer has produced for it (`variants`). All variants map
-/// to the single corrected spelling.
-///
-/// This is the industry-standard shape (VoiceInk, Superwhisper, Wispr Flow all
-/// store an exact term with one-or-more trigger spellings): a word that gets
-/// misheard several ways collects its mishearings under one entry instead of
-/// spawning rival rules. Each new mishearing costs the user exactly one
-/// correction, then it's fixed forever.
-struct LearnedTerm: Codable, Equatable, Identifiable, Sendable {
-    /// What the user wants written, e.g. "Whop". Replacements always resolve *to* this.
+struct LearnedCorrection: Codable, Equatable, Identifiable, Sendable {
+    let heard: String
     let corrected: String
-    /// Observed mis-hearings that should all become `corrected`, e.g. ["WAP", "Wapp"].
-    var variants: [String]
     var createdAt: Date
+    /// Evidence of a verified user edit, absent in legacy global replacements.
+    var contexts: [CorrectionDetector.Context]? = nil
 
-    /// Identity is the corrected spelling (case-insensitive), so re-correcting the
-    /// same term folds new mishearings into the existing entry rather than piling
-    /// up duplicates.
-    var id: String { corrected.lowercased() }
+    var id: String { CorrectionDetector.normalized(heard) }
+    var needsContext: Bool { contexts?.contains(where: \.hasEnoughEvidence) != true }
+    var usageDescription: String {
+        needsContext ? "Paused — edit a dictation to relearn" : "Checked against audio before use"
+    }
 }
 
-/// Persists the words Murmur has learned from your edits and applies them to
-/// future transcripts. Two levers: `apply(to:)` does an exact, reliable
-/// find-and-replace on the final text, and `biasTerms` nudges the recognizer
-/// toward the right spelling in the first place (via the existing vocab prompt).
-///
-/// **Exact-only by design.** An earlier version also ran a *phonetic
-/// generalization* pass that rewrote never-corrected transcript tokens when they
-/// merely sounded/looked like a learned term. That over-fired badly — with a
-/// learned "Whop", tokens like "WhatsApp", "WiFi", and "WEB" were all rewritten
-/// to "Whop" because the match test was an OR of three weak signals at a 34%
-/// similarity floor. Every shipping dictation app (VoiceInk, Superwhisper, Wispr
-/// Flow, MacWhisper) applies corrections as **exact, deterministic replacements**
-/// and puts any fuzziness at *learn* time, anchored to a real human edit — never
-/// at apply time against unseen words. This store does the same: the fuzzy
-/// phonetic logic lives in `CorrectionDetector` (deciding whether an edit is a
-/// learnable mishearing) and in `learn` (folding a new mishearing into the right
-/// term); `apply(to:)` only ever swaps spellings it has literally been taught.
-///
-/// `apply(to:)` is on the transcription **delivery hot path**, so it must be fast
-/// and self-contained: it runs only precomputed, in-memory string matching and
-/// never calls AppKit, a spell-checker, or any XPC service. (An even earlier
-/// version used `NSSpellChecker` per word; that blocks the main thread on the
-/// `AppleSpell` XPC service, which intermittently stalls for seconds and froze
-/// the whole app — the "Polishing…" beachball.)
+struct IgnoredCorrection: Codable, Equatable, Identifiable, Sendable {
+    let heard: String
+    let corrected: String
+    var id: String { CorrectionDetector.normalized(heard) + "→" + CorrectionDetector.normalized(corrected) }
+}
+
+struct AppliedLearning: Sendable {
+    let correction: LearnedCorrection
+    /// UTF-16 location in the delivered text, not the original ASR text.
+    let range: NSRange
+}
+
+struct LearningApplication: Sendable {
+    let text: String
+    let applied: [AppliedLearning]
+}
+
+/// Retrieval and reconciliation only. A plan NEVER rewrites text without a
+/// second recognition of the same audio. Exact observed aliases limit what can
+/// be proposed; the second recognizer can keep the original or abstain.
+struct LearningPlan: Sendable {
+    struct Proposal: Sendable {
+        let correction: LearnedCorrection
+        let range: NSRange
+        let tokenStart: Int
+        let tokenCount: Int
+    }
+    let original: String
+    let proposals: [Proposal]
+    var hints: [String] {
+        var seen = Set<String>()
+        return proposals.compactMap {
+            seen.insert($0.correction.corrected.lowercased()).inserted ? $0.correction.corrected : nil
+        }
+    }
+
+    static func make(text: String, corrections: [LearnedCorrection]) -> LearningPlan {
+        guard (text as NSString).length <= CorrectionDetector.maxTextLength else {
+            return LearningPlan(original: text, proposals: [])
+        }
+        struct Rule { let correction: LearnedCorrection; let words: [String] }
+        var byFirst: [String: [Rule]] = [:]
+        for correction in corrections.prefix(500) where !correction.needsContext {
+            guard CorrectionDetector.validTerm(correction.heard), CorrectionDetector.validTerm(correction.corrected) else { continue }
+            let words = CorrectionDetector.tokens(in: correction.heard).map { $0.text.lowercased() }
+            guard let first = words.first else { continue }
+            byFirst[first, default: []].append(Rule(correction: correction, words: words))
+        }
+        let tokens = CorrectionDetector.tokens(in: text)
+        let source = text as NSString
+        var proposals: [Proposal] = [], selectedTerms = Set<String>(), position = 0
+        while position < tokens.count {
+            let rules = (byFirst[tokens[position].text.lowercased()] ?? []).sorted { $0.words.count > $1.words.count }
+            var chosen: Proposal?
+            for rule in rules {
+                let end = position + rule.words.count
+                guard end <= tokens.count,
+                      tokens[position..<end].map({ $0.text.lowercased() }) == rule.words else { continue }
+                let range = NSRange(location: tokens[position].range.location,
+                                    length: NSMaxRange(tokens[end - 1].range) - tokens[position].range.location)
+                let sourceSpan = source.substring(with: range)
+                guard CorrectionDetector.validTerm(sourceSpan), sourceSpan != rule.correction.corrected else { continue }
+                let term = rule.correction.corrected.lowercased()
+                guard selectedTerms.contains(term) || selectedTerms.count < 6 else { continue }
+                selectedTerms.insert(term)
+                chosen = Proposal(correction: rule.correction, range: range, tokenStart: position, tokenCount: rule.words.count)
+                break
+            }
+            if let chosen {
+                proposals.append(chosen)
+                position += chosen.tokenCount
+            } else { position += 1 }
+            // Bound work and prompt size. An oversized plan abstains completely.
+            if proposals.count > 16 { return LearningPlan(original: text, proposals: []) }
+        }
+        return LearningPlan(original: text, proposals: proposals)
+    }
+
+    /// Homophones cannot be resolved by spelling hints alone. Require a nearby
+    /// content word from a real user correction, on the same side of the name.
+    /// Function/time words are not evidence; no semantic guesses or fuzzy match.
+    var matchingContextPositions: Set<Int> {
+        let tokens = CorrectionDetector.tokens(in: original)
+        func anchors(_ words: [String]) -> Set<String> {
+            Set(words.map { $0.lowercased() }.filter {
+                $0.count >= 4 && !Self.contextStopWords.contains($0)
+            })
+        }
+        return Set(proposals.compactMap { proposal in
+            let current = CorrectionDetector.context(at: proposal.tokenStart,
+                through: proposal.tokenStart + proposal.tokenCount - 1, tokens: tokens, text: original)
+            let matches = (proposal.correction.contexts ?? []).contains { prior in
+                !anchors(prior.before).isDisjoint(with: anchors(current.before))
+                    || !anchors(prior.after).isDisjoint(with: anchors(current.after))
+            }
+            return matches ? proposal.tokenStart : nil
+        })
+    }
+
+    private static let contextStopWords: Set<String> = Set("""
+        this that these those there their they them then than with without from into onto over under
+        through about around here have having been were will would should could might must just very
+        really please today tomorrow yesterday later before after again next last first every some any
+        more most only also even still already always never when where what which while because though
+        and the for you your our its it's now not use using used want need make made going get gets got
+        isso isto esse essa estes estas como para pela pelo pelas pelos uma umas uns voce você voces vocês
+        hoje ontem amanha amanhã depois antes muito mais menos tudo todos todas quando onde porque
+        """.split(whereSeparator: \.isWhitespace).map(String.init))
+
+    /// Accept only outputs expressible as unchanged words plus known proposed
+    /// substitutions. Ignore the verifier's formatting and never copy its prose.
+    /// Any unrelated insertion, deletion or rewrite rejects the whole result.
+    func confirm(verifiedText: String?) -> LearningApplication {
+        let unchanged = LearningApplication(text: original, applied: [])
+        guard !proposals.isEmpty, let verifiedText,
+              (verifiedText as NSString).length <= CorrectionDetector.maxTextLength else { return unchanged }
+        let contextApproved = matchingContextPositions
+        let sourceTokens = CorrectionDetector.tokens(in: original)
+        let verifiedTokens = CorrectionDetector.tokens(in: verifiedText)
+        let byPosition = Dictionary(uniqueKeysWithValues: proposals.map { ($0.tokenStart, $0) })
+        var accepted: [Proposal] = [], sourceIndex = 0, verifiedIndex = 0
+        while sourceIndex < sourceTokens.count {
+            if let proposal = byPosition[sourceIndex] {
+                let targetTokens = CorrectionDetector.tokens(in: proposal.correction.corrected)
+                let end = verifiedIndex + targetTokens.count
+                if contextApproved.contains(proposal.tokenStart), end <= verifiedTokens.count,
+                   verifiedTokens[verifiedIndex..<end].map({ $0.text.lowercased() })
+                    == targetTokens.map({ $0.text.lowercased() }) {
+                    // Casing/spacing-only corrections are formatting, so require
+                    // the verifier to actually produce the saved spelling.
+                    let onlyFormatting = CorrectionDetector.normalized(proposal.correction.heard)
+                        == CorrectionDetector.normalized(proposal.correction.corrected)
+                    let actualRange = NSRange(location: verifiedTokens[verifiedIndex].range.location,
+                        length: NSMaxRange(verifiedTokens[end - 1].range) - verifiedTokens[verifiedIndex].range.location)
+                    if !onlyFormatting || (verifiedText as NSString).substring(with: actualRange) == proposal.correction.corrected {
+                        accepted.append(proposal)
+                        sourceIndex += proposal.tokenCount
+                        verifiedIndex = end
+                        continue
+                    }
+                }
+            }
+            if let proposal = byPosition[sourceIndex], contextApproved.contains(proposal.tokenStart),
+               CorrectionDetector.normalized(proposal.correction.heard) != CorrectionDetector.normalized(proposal.correction.corrected) {
+                let end = verifiedIndex + proposal.tokenCount
+                guard end <= verifiedTokens.count,
+                      verifiedTokens[verifiedIndex..<end].map({ $0.text.lowercased() })
+                        == sourceTokens[sourceIndex..<(sourceIndex + proposal.tokenCount)].map({ $0.text.lowercased() }) else { return unchanged }
+                accepted.append(proposal)
+                sourceIndex += proposal.tokenCount
+                verifiedIndex = end
+                continue
+            }
+            guard verifiedIndex < verifiedTokens.count,
+                  sourceTokens[sourceIndex].text.lowercased() == verifiedTokens[verifiedIndex].text.lowercased() else { return unchanged }
+            sourceIndex += 1
+            verifiedIndex += 1
+        }
+        guard verifiedIndex == verifiedTokens.count, !accepted.isEmpty else { return unchanged }
+        let source = original as NSString
+        var output = "", cursor = 0, applied: [AppliedLearning] = []
+        for proposal in accepted {
+            output += source.substring(with: NSRange(location: cursor, length: proposal.range.location - cursor))
+            let range = NSRange(location: (output as NSString).length, length: (proposal.correction.corrected as NSString).length)
+            output += proposal.correction.corrected
+            applied.append(AppliedLearning(correction: proposal.correction, range: range))
+            cursor = NSMaxRange(proposal.range)
+        }
+        output += source.substring(from: cursor)
+        return LearningApplication(text: output, applied: applied)
+    }
+
+    /// Cleanup/chunk stitching can shift ranges. Keep receipts only for a unique
+    /// unchanged local phrase on each side, never guess which repeated name moved.
+    static func relocate(_ applications: [LearningApplication], into text: String) -> [AppliedLearning] {
+        let destination = CorrectionDetector.tokens(in: text)
+        var receipts: [AppliedLearning] = []
+        for application in applications {
+            if applications.count == 1, application.text == text { return application.applied }
+            let source = CorrectionDetector.tokens(in: application.text)
+            for receipt in application.applied {
+                guard let start = source.firstIndex(where: { $0.range.location == receipt.range.location }),
+                      let end = source.firstIndex(where: { NSMaxRange($0.range) == NSMaxRange(receipt.range) }) else { continue }
+                let lower = max(0, start - 2), upper = min(source.count, end + 3)
+                let signature = source[lower..<upper].map { $0.text.lowercased() }
+                guard !signature.isEmpty, signature.count <= destination.count else { continue }
+                let matches = (0...(destination.count - signature.count)).filter {
+                    destination[$0..<($0 + signature.count)].map { $0.text.lowercased() } == signature
+                }
+                guard matches.count == 1, let match = matches.first else { continue }
+                let first = match + start - lower, last = match + end - lower
+                let range = NSRange(location: destination[first].range.location,
+                                    length: NSMaxRange(destination[last].range) - destination[first].range.location)
+                guard (text as NSString).substring(with: range) == receipt.correction.corrected,
+                      !receipts.contains(where: { $0.range == range }) else { continue }
+                receipts.append(AppliedLearning(correction: receipt.correction, range: range))
+            }
+        }
+        return receipts
+    }
+}
+
 @MainActor
 @Observable
 final class CorrectionStore {
-    /// Bounds so a pathological transcript or a huge learned list can never make
-    /// delivery slow.
-    private enum Limit {
-        static let rules = 500        // compiled variant→corrected rules
-        static let biasTerms = 200    // most-recent terms fed to the recognizer
-    }
-
-    private(set) var terms: [LearnedTerm] { didSet { rebuildIndex() } }
-
+    typealias AppliedCorrection = AppliedLearning
+    typealias Application = LearningApplication
+    private(set) var corrections: [LearnedCorrection]
+    private(set) var ignored: [IgnoredCorrection]
     private let defaults: UserDefaults
-    private let key = "learnedCorrections"
-
-    // MARK: - Precomputed index (rebuilt only when `terms` changes)
-
-    /// A compiled exact rule: a whole-word, case-insensitive regex for one
-    /// variant, plus the corrected-spelling replacement template.
-    private struct ExactRule {
-        let regex: NSRegularExpression
-        let template: String
-    }
-
-    private var exactRules: [ExactRule] = []
-    /// One alternation of every variant, longest first, plus the lookup from a
-    /// matched variant to its corrected spelling. Applying the rules through a
-    /// single pass is what stops them chaining into each other.
-    private var combinedRegex: NSRegularExpression?
-    private var correctedByVariant: [String: String] = [:]
+    private let key = "learnedCorrectionsV3"
+    private let ignoredKey = "ignoredCorrections"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        var didMigrate = false
-        terms = Self.load(from: defaults, key: key, didMigrate: &didMigrate)
-        rebuildIndex()   // didSet doesn't fire from an initializer
-        if didMigrate { persist() }   // rewrite legacy data in the new shape once
-    }
-
-    private func rebuildIndex() {
-        // Flatten to (variant → corrected) pairs, longest variant first so a
-        // specific trigger wins over any shorter overlapping one.
-        let pairs = terms
-            .flatMap { term in term.variants.map { (variant: $0, corrected: term.corrected) } }
-            .sorted { $0.variant.count > $1.variant.count }
-            .prefix(Limit.rules)
-
-        exactRules = pairs.compactMap { pair in
-            // Unicode-aware word boundary via look-arounds (not `\b`): a letter or
-            // number may not sit directly adjacent, but punctuation, whitespace,
-            // and the string edges may. Handles digits/hyphens inside terms
-            // ("GPT-4") and non-ASCII names ("Fernández") correctly.
-            let escaped = NSRegularExpression.escapedPattern(for: pair.variant)
-            let pattern = Self.boundaryBefore + escaped + Self.boundaryAfter
-            guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
-            return ExactRule(regex: re, template: NSRegularExpression.escapedTemplate(for: pair.corrected))
-        }
-
-        correctedByVariant = Dictionary(pairs.map { ($0.variant.lowercased(), $0.corrected) },
-                                        uniquingKeysWith: { first, _ in first })
-        let alternation = pairs
-            .map { NSRegularExpression.escapedPattern(for: $0.variant) }
-            .joined(separator: "|")
-        combinedRegex = alternation.isEmpty ? nil : try? NSRegularExpression(
-            pattern: Self.boundaryBefore + "(" + alternation + ")" + Self.boundaryAfter,
-            options: [.caseInsensitive])
-    }
-
-    /// Unicode-aware word boundary via look-arounds (not `\b`). Letters, digits,
-    /// hyphens and apostrophes may not sit directly adjacent; whitespace, other
-    /// punctuation and the string edges may.
-    ///
-    /// Hyphen and apostrophe are in the set because they join words: without
-    /// them a rule `Anne → Ana` rewrote the middle of "Anne-Marie", `co → CO`
-    /// hit "co-founder", and `GPT-4 → GPT-5` rewrote inside "X-GPT-4-turbo".
-    private static let joiners = "\\p{L}\\p{N}\\-'\u{2019}"
-    private static let boundaryBefore = "(?<![" + joiners + "])"
-    private static let boundaryAfter = "(?![" + joiners + "])"
-
-    // MARK: - Loading / migration
-
-    /// Load the stored terms, transparently upgrading the old
-    /// `[{heard, corrected}]` format to the new term/variant shape.
-    private static func load(from defaults: UserDefaults, key: String, didMigrate: inout Bool) -> [LearnedTerm] {
-        guard let data = defaults.data(forKey: key) else { return [] }
-        let decoder = JSONDecoder()
-        // New format first; it has a `variants` array the legacy shape lacks, so
-        // legacy data fails this decode and falls through.
-        if let terms = try? decoder.decode([LearnedTerm].self, from: data) {
-            return normalize(terms)
-        }
-        if let legacy = try? decoder.decode([LegacyCorrection].self, from: data) {
-            didMigrate = true
-            return normalize(migrate(legacy))
-        }
-        return []
-    }
-
-    /// The pre-variant on-disk shape: one row per mishearing.
-    private struct LegacyCorrection: Codable {
-        let heard: String
-        let corrected: String
-        var createdAt: Date
-    }
-
-    /// Fold legacy rows (newest-first) into per-term variant lists.
-    private static func migrate(_ legacy: [LegacyCorrection]) -> [LearnedTerm] {
-        var order: [String] = []                 // corrected keys, first-seen (newest) order
-        var byKey: [String: LearnedTerm] = [:]
-        for c in legacy {
-            let corrected = c.corrected.trimmingCharacters(in: .whitespacesAndNewlines)
-            let heard = c.heard.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !corrected.isEmpty, !heard.isEmpty else { continue }
-            let k = corrected.lowercased()
-            if var term = byKey[k] {
-                term.variants.append(heard)
-                byKey[k] = term
+        if let data = defaults.data(forKey: key),
+           let decoded = try? JSONDecoder().decode([LearnedCorrection].self, from: data) {
+            corrections = decoded
+        } else if let data = defaults.data(forKey: "learnedCorrections") {
+            // Preserve the old key for rollback. Both released storage formats
+            // import without promoting unscoped historical mappings to active rules.
+            struct LegacyTerm: Decodable { let corrected: String; let variants: [String]; let createdAt: Date }
+            if let terms = try? JSONDecoder().decode([LegacyTerm].self, from: data) {
+                corrections = terms.flatMap { term in
+                    term.variants.map { LearnedCorrection(heard: $0, corrected: term.corrected, createdAt: term.createdAt) }
+                }
             } else {
-                order.append(k)
-                byKey[k] = LearnedTerm(corrected: corrected, variants: [heard], createdAt: c.createdAt)
+                corrections = ((try? JSONDecoder().decode([LearnedCorrection].self, from: data)) ?? []).map {
+                    LearnedCorrection(heard: $0.heard, corrected: $0.corrected, createdAt: $0.createdAt)
+                }
             }
-        }
-        return order.compactMap { byKey[$0] }
+        } else { corrections = [] }
+        ignored = defaults.data(forKey: ignoredKey).flatMap { try? JSONDecoder().decode([IgnoredCorrection].self, from: $0) } ?? []
+        var seen = Set<String>()
+        corrections = corrections.filter { seen.insert($0.id).inserted }
     }
 
-    /// Enforce the store's invariants (order preserved, newest-first):
-    /// 1. corrected and every variant are trimmed and non-empty;
-    /// 2. a variant literally equal to its corrected form is dropped (a no-op
-    ///    rule) — but a case-only difference is *kept*, since it still normalizes
-    ///    casing ("openai" → "OpenAI");
-    /// 3. variants are de-duplicated case-insensitively within a term;
-    /// 4. a given variant belongs to only one term — the earliest (newest) in the
-    ///    list wins, so the most recent correction owns the mishearing;
-    /// 5. terms with no surviving variants are dropped;
-    /// 6. corrected terms are de-duplicated case-insensitively (newest kept).
-    private static func normalize(_ input: [LearnedTerm]) -> [LearnedTerm] {
-        var out: [LearnedTerm] = []
-        var termKeys = Set<String>()          // corrected.lowercased() already emitted
-        var claimedVariants = Set<String>()   // variant.lowercased() already owned
-        for term in input {
-            let corrected = term.corrected.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !corrected.isEmpty else { continue }
-            let termKey = corrected.lowercased()
-            guard !termKeys.contains(termKey) else { continue }
-            var seenHere = Set<String>()
-            var variants: [String] = []
-            for raw in term.variants {
-                let v = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !v.isEmpty, v != corrected else { continue }
-                let vKey = v.lowercased()
-                guard !seenHere.contains(vKey), !claimedVariants.contains(vKey) else { continue }
-                seenHere.insert(vKey)
-                variants.append(v)
-            }
-            guard !variants.isEmpty else { continue }
-            for v in variants { claimedVariants.insert(v.lowercased()) }
-            termKeys.insert(termKey)
-            out.append(LearnedTerm(corrected: corrected, variants: variants, createdAt: term.createdAt))
-        }
-        return out
-    }
-
-    // MARK: - Mutation
-
-    /// Learn from a detected edit: fold the mishearing `heard` into the term for
-    /// `corrected`, newest-first. Returns the affected term, or `nil` when nothing
-    /// was learned (empty input, or a *revert* — see below).
-    ///
-    /// Revert protection: if the user changed one of our corrected outputs back to
-    /// a spelling we already treat as a mishearing of it (they're undoing a
-    /// replacement we made), we forget that variant instead of learning the
-    /// inverse — otherwise the two rules would ping-pong the word forever.
     @discardableResult
-    func learn(heard: String, corrected: String) -> LearnedTerm? {
-        let h = heard.trimmingCharacters(in: .whitespacesAndNewlines)
-        let c = corrected.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !h.isEmpty, !c.isEmpty else { return nil }
+    func learn(_ candidate: CorrectionDetector.Candidate) -> LearnedCorrection? {
+        let suppression = IgnoredCorrection(heard: candidate.heard, corrected: candidate.corrected)
+        guard CorrectionDetector.isLearnable(candidate), !ignored.contains(where: { $0.id == suppression.id }) else { return nil }
+        let previous = corrections.first { $0.id == CorrectionDetector.normalized(candidate.heard) }
+        var contexts = previous?.corrected == candidate.corrected ? previous?.contexts ?? [] : []
+        if let context = candidate.context, context.hasEnoughEvidence {
+            contexts.removeAll { $0 == context }
+            contexts.insert(context, at: 0)
+        }
+        let entry = LearnedCorrection(heard: candidate.heard, corrected: candidate.corrected,
+                                      createdAt: Date(), contexts: Array(contexts.prefix(8)))
+        corrections.removeAll { $0.id == entry.id }
+        corrections.insert(entry, at: 0)
+        persist()
+        return entry
+    }
 
-        // Revert: `h` is an existing corrected term and `c` is one of its variants.
-        if let i = terms.firstIndex(where: { $0.corrected.caseInsensitiveEquals(h) }),
-           terms[i].variants.contains(where: { $0.caseInsensitiveEquals(c) }) {
-            var reverted = terms.remove(at: i)
-            reverted.variants.removeAll { $0.caseInsensitiveEquals(c) }
-            if !reverted.variants.isEmpty { terms.insert(reverted, at: i) }
-            terms = Self.normalize(terms)
+    func remove(_ correction: LearnedCorrection) {
+        let suppression = IgnoredCorrection(heard: correction.heard, corrected: correction.corrected)
+        if !ignored.contains(where: { $0.id == suppression.id }) { ignored.append(suppression) }
+        corrections.removeAll { $0.id == correction.id }
+        persist()
+    }
+
+    func allowLearning(_ item: IgnoredCorrection) {
+        ignored.removeAll { $0.id == item.id }
+        persist()
+    }
+
+    func undoLearning(_ entry: LearnedCorrection, previous: LearnedCorrection?) {
+        guard corrections.first(where: { $0.id == entry.id }) == entry else { return }
+        if let previous {
+            corrections.removeAll { $0.id == entry.id }
+            corrections.insert(previous, at: 0)
             persist()
-            return nil
-        }
-
-        // Normal learn: add `h` to the term for `c` (creating it if new), and move
-        // that term to the front so it owns the mishearing (last correction wins).
-        if let i = terms.firstIndex(where: { $0.corrected.caseInsensitiveEquals(c) }) {
-            var existing = terms.remove(at: i)
-            existing.variants.insert(h, at: 0)
-            terms.insert(LearnedTerm(corrected: c, variants: existing.variants, createdAt: Date()), at: 0)
-        } else {
-            terms.insert(LearnedTerm(corrected: c, variants: [h], createdAt: Date()), at: 0)
-        }
-        terms = Self.normalize(terms)
-        persist()
-        return terms.first { $0.corrected.caseInsensitiveEquals(c) }
+        } else { remove(entry) }
     }
 
-    /// Remove an entire learned term.
-    func remove(_ term: LearnedTerm) {
-        terms.removeAll { $0.id == term.id }
-        persist()
+    @discardableResult
+    func reject(edit: CorrectionDetector.Candidate, applied: [AppliedCorrection]) -> Bool {
+        guard let match = applied.first(where: { $0.range == edit.range && $0.correction.corrected == edit.heard }),
+              corrections.first(where: { $0.id == match.correction.id }) == match.correction else { return false }
+        remove(match.correction)
+        return true
     }
 
-    /// Remove a single mishearing from a term; drops the term if it was the last one.
-    func removeVariant(_ variant: String, from term: LearnedTerm) {
-        guard let i = terms.firstIndex(where: { $0.id == term.id }) else { return }
-        terms[i].variants.removeAll { $0.caseInsensitiveEquals(variant) }
-        if terms[i].variants.isEmpty { terms.remove(at: i) }
+    func update(_ original: LearnedCorrection, heard: String, corrected: String) {
+        let heard = heard.trimmingCharacters(in: .whitespacesAndNewlines)
+        let corrected = corrected.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard CorrectionDetector.validTerm(heard), CorrectionDetector.validTerm(corrected),
+              let position = corrections.firstIndex(where: { $0.id == original.id }) else { return }
+        let updated = LearnedCorrection(heard: heard, corrected: corrected, createdAt: original.createdAt,
+                                        contexts: CorrectionDetector.normalized(heard) == original.id ? original.contexts : nil)
+        corrections.removeAll { $0.id == original.id || $0.id == updated.id }
+        corrections.insert(updated, at: min(position, corrections.count))
+        ignored.removeAll { $0.id == IgnoredCorrection(heard: heard, corrected: corrected).id }
         persist()
     }
 
-    /// Edit a term in place (from the settings UI): a new corrected spelling and a
-    /// new variant list. Keeps the entry's position so the list doesn't reshuffle
-    /// while you type. The edited term owns its variants — they're stripped from
-    /// every other entry first so normalization can't hand ownership elsewhere.
-    func update(_ original: LearnedTerm, corrected: String, variants: [String]) {
-        let c = corrected.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !c.isEmpty, let i = terms.firstIndex(where: { $0.id == original.id }) else { return }
-        let cleanVariants = variants
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let owned = Set(cleanVariants.map { $0.lowercased() })
-        for j in terms.indices where j != i {
-            terms[j].variants.removeAll { owned.contains($0.lowercased()) }
-        }
-        terms[i] = LearnedTerm(corrected: c, variants: cleanVariants, createdAt: original.createdAt)
-        terms = Self.normalize(terms)
-        persist()
-    }
-
-    /// The corrected spellings of the most-recently-touched terms — fed to the
-    /// recognizer as bias terms. Capped: Superwhisper's own guidance is to keep
-    /// the vocab hint list small, since an overloaded one degrades punctuation and
-    /// base-word accuracy.
-    var biasTerms: [String] {
-        terms.prefix(Limit.biasTerms).map(\.corrected)
-    }
-
-    // MARK: - Apply (delivery hot path — pure, bounded, no AppKit/XPC)
-
-    /// Replace learned mis-hearings in `text` with their corrected spellings.
-    /// Whole-word and case-insensitive; longer variants first so they win over any
-    /// shorter overlap. Exact matches only — a token is rewritten solely when it
-    /// literally equals a taught variant. Entirely in-memory; safe to call
-    /// synchronously on the delivery path.
-    /// Apply every learned correction in ONE left-to-right pass.
-    ///
-    /// Running each rule over the whole string in sequence let one rule's output
-    /// be re-matched by the next: with `GPT-4 → GPT-5` and `GPT-5 → GPT-6`
-    /// stored, "we use GPT-4" came out as "we use GPT-6". A single pass reads
-    /// each character of the ORIGINAL once, so a replacement can never be
-    /// re-examined. The alternation is ordered longest-variant-first, so the
-    /// most specific rule wins where two could match at the same position.
-    func apply(to text: String) -> String {
-        guard !text.isEmpty, let regex = combinedRegex else { return text }
-        let ns = text as NSString
-        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
-        guard !matches.isEmpty else { return text }
-
-        var result = ""
-        result.reserveCapacity(text.count)
-        var cursor = 0
-        for match in matches {
-            let range = match.range
-            guard range.location >= cursor else { continue }   // never overlap
-            result += ns.substring(with: NSRange(location: cursor, length: range.location - cursor))
-            let matched = ns.substring(with: range)
-            result += correctedByVariant[matched.lowercased()] ?? matched
-            cursor = range.location + range.length
-        }
-        result += ns.substring(from: cursor)
-        return result
+    func apply(to text: String, verifiedText: String? = nil) -> String { application(to: text, verifiedText: verifiedText).text }
+    func application(to text: String, verifiedText: String? = nil) -> Application {
+        LearningPlan.make(text: text, corrections: corrections).confirm(verifiedText: verifiedText)
     }
 
     private func persist() {
-        if let data = try? JSONEncoder().encode(terms) {
-            defaults.set(data, forKey: key)
-        }
-    }
-
-    // MARK: - Self-test (env-gated, mirrors CorrectionDetector.runSelfTest)
-
-    /// Inject terms without persisting — testing only.
-    private func setForTesting(_ list: [LearnedTerm]) { terms = list }
-
-    /// Correctness + performance checks for the exact-replace model. Triggered
-    /// alongside the detector self-test via `MURMUR_TEST_CORRECTIONS`. Runs against
-    /// a throwaway defaults suite so it never touches the user's real data.
-    @discardableResult
-    static func runSelfTest() -> Int {
-        let suiteName = "com.murmur.correctionstore.selftest"
-        let suite = UserDefaults(suiteName: suiteName) ?? .standard
-        suite.removePersistentDomain(forName: suiteName)
-        func term(_ corrected: String, _ variants: [String]) -> LearnedTerm {
-            LearnedTerm(corrected: corrected, variants: variants, createdAt: Date(timeIntervalSince1970: 0))
-        }
-
-        // --- apply(): exact, bounded, no over-matching ---
-        let store = CorrectionStore(defaults: suite)
-        store.setForTesting([
-            term("Whop", ["WAP", "Wapp"]),
-            term("Vercel", ["Versal"]),
-            term("OpenAI", ["openai"]),
-        ])
-        struct Case { let input: String; let expect: String; let note: String }
-        let cases: [Case] = [
-            .init(input: "pay with WAP today", expect: "pay with Whop today", note: "exact variant → corrected"),
-            .init(input: "open WhatsApp now", expect: "open WhatsApp now", note: "HEADLINE: WhatsApp is NOT Whop"),
-            .init(input: "I love wifi and web", expect: "I love wifi and web", note: "no phonetic overmatch"),
-            .init(input: "please swap the cable", expect: "please swap the cable", note: "word-boundary: swap ≠ WAP"),
-            .init(input: "wap then wapp", expect: "Whop then Whop", note: "case-insensitive, both variants"),
-            .init(input: "deploy on Versal please", expect: "deploy on Vercel please", note: "second term still works"),
-            .init(input: "ship openai models", expect: "ship OpenAI models", note: "casing-only correction applies"),
-        ]
-        // Chaining: one rule's OUTPUT must never be re-matched by another rule.
-        let chain = CorrectionStore(defaults: suite)
-        chain.setForTesting([term("GPT-5", ["GPT-4"]), term("GPT-6", ["GPT-5"])])
-        let chainCases: [Case] = [
-            .init(input: "we use GPT-4 daily", expect: "we use GPT-5 daily",
-                  note: "HEADLINE: A→B must not then run through B→C"),
-            .init(input: "we use GPT-5 daily", expect: "we use GPT-6 daily",
-                  note: "the second rule still applies on its own"),
-        ]
-        // Word joiners: a hyphen or apostrophe binds words together, so a rule
-        // must not rewrite the middle of a compound.
-        let joined = CorrectionStore(defaults: suite)
-        joined.setForTesting([term("Ana", ["Anne"]), term("CO", ["co"]), term("Whop", ["WAP"])])
-        let joinerCases: [Case] = [
-            .init(input: "Anne-Marie called", expect: "Anne-Marie called",
-                  note: "HEADLINE: hyphenated name is left alone"),
-            .init(input: "the co-founder agreed", expect: "the co-founder agreed",
-                  note: "HEADLINE: co-founder is not CO-founder"),
-            .init(input: "Anne called", expect: "Ana called", note: "standalone still corrects"),
-            .init(input: "WAP's dashboard", expect: "WAP's dashboard",
-                  note: "apostrophe binds too — possessive left alone"),
-        ]
-        var passed = 0
-        for c in cases {
-            let got = store.apply(to: c.input)
-            let ok = got == c.expect
-            if ok { passed += 1 }
-            print("[CorrectionStore] \(ok ? "PASS" : "FAIL") [\(c.note)] “\(c.input)” → “\(got)” expect “\(c.expect)”")
-        }
-        for c in chainCases {
-            let got = chain.apply(to: c.input)
-            let ok = got == c.expect
-            if ok { passed += 1 }
-            print("[CorrectionStore] \(ok ? "PASS" : "FAIL") [\(c.note)] “\(c.input)” → “\(got)” expect “\(c.expect)”")
-        }
-        for c in joinerCases {
-            let got = joined.apply(to: c.input)
-            let ok = got == c.expect
-            if ok { passed += 1 }
-            print("[CorrectionStore] \(ok ? "PASS" : "FAIL") [\(c.note)] “\(c.input)” → “\(got)” expect “\(c.expect)”")
-        }
-        let applyTotal = cases.count + chainCases.count + joinerCases.count
-        print("[CorrectionStore] \(passed)/\(applyTotal) apply() cases passed")
-
-        // --- learn(): mishearings accumulate, then revert protection ---
-        let learnStore = CorrectionStore(defaults: suite)
-        learnStore.setForTesting([])
-        learnStore.learn(heard: "WAP", corrected: "Whop")
-        learnStore.learn(heard: "Wapp", corrected: "Whop")     // second mishearing folds in
-        let folded = learnStore.terms.count == 1 && (learnStore.terms.first?.variants.count ?? 0) == 2
-        print("[CorrectionStore] \(folded ? "PASS" : "FAIL") learn: two mishearings fold into one term \(learnStore.terms.map(\.variants))")
-
-        learnStore.learn(heard: "Whop", corrected: "WAP")      // user reverts our replacement
-        let noInverse = !learnStore.terms.contains { $0.corrected.caseInsensitiveEquals("WAP") }
-        let variantGone = (learnStore.terms.first { $0.corrected == "Whop" }?.variants
-            .contains { $0.caseInsensitiveEquals("WAP") }) == false
-        print("[CorrectionStore] \(noInverse && variantGone ? "PASS" : "FAIL") learn: revert forgets the variant, no ping-pong \(learnStore.terms.map { ($0.corrected, $0.variants) })")
-
-        // --- performance: long transcript × large rule set stays fast ---
-        var many: [LearnedTerm] = []
-        for i in 0..<200 { many.append(term("Term\(i)X", ["term\(i)x"])) }
-        store.setForTesting(many)
-        let words = Array(repeating: "the quick brown fox jumped over lazy dogs", count: 600).joined(separator: " ")
-        let clock = ContinuousClock()
-        let elapsed = clock.measure { _ = store.apply(to: words) }
-        let ms = Double(elapsed.components.attoseconds) / 1_000_000_000_000_000.0 + Double(elapsed.components.seconds) * 1000.0
-        let fast = ms < 250
-        print("[CorrectionStore] \(fast ? "PASS" : "FAIL") perf: apply() on \(words.count) chars × \(many.count) rules took \(String(format: "%.1f", ms)) ms (budget 250 ms)")
-
-        let storeFailures = (applyTotal - passed)
-            + (folded ? 0 : 1) + (noInverse && variantGone ? 0 : 1) + (fast ? 0 : 1)
-        print("[CorrectionStore] \(storeFailures) failures")
-        fflush(stdout)
-        suite.removePersistentDomain(forName: suiteName)
-        return storeFailures
+        if let data = try? JSONEncoder().encode(corrections) { defaults.set(data, forKey: key) }
+        if let data = try? JSONEncoder().encode(ignored) { defaults.set(data, forKey: ignoredKey) }
     }
 }
 
-private extension String {
-    func caseInsensitiveEquals(_ other: String) -> Bool {
-        caseInsensitiveCompare(other) == .orderedSame
+extension LearningPlan {
+    static func runSelfTest() -> Int {
+        let rule = LearnedCorrection(heard: "fan basis", corrected: "Fanbasis", createdAt: Date(),
+                                     contexts: [.init(before: ["use"], after: ["for", "invoices"])])
+        let plan = make(text: "Use fan basis for invoices.", corrections: [rule])
+        let checks = [plan.confirm(verifiedText: nil).text == plan.original,
+                      plan.confirm(verifiedText: "Use Fanbasis for invoices.").text == "Use Fanbasis for invoices.",
+                      plan.confirm(verifiedText: "Use Fanbasis for refunds.").text == plan.original]
+        let failures = checks.filter { !$0 }.count
+        print("[LearningPlan] \(failures == 0 ? "PASS" : "FAIL") audio-gated correction checks")
+        return failures
     }
 }

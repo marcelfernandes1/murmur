@@ -37,6 +37,28 @@ Hold a key, speak, and your words are typed into whatever app you're in (or copi
 - **Hold Fn (🌐)**, speak, release → text is inserted at your cursor (or copied if no text field is focused).
 - Open the menu-bar icon ▸ **Settings** to choose the engine/model, set custom shortcuts, language, custom vocabulary, and toggle **Smart cleanup**.
 
+### Learning from edits (Mac)
+
+With **Learn corrections when I edit dictated text** enabled, Murmur watches a verified paste for about 30 seconds. A name or short phrase correction must settle for three seconds. It remembers the exact mishearing, desired spelling and up to two nearby words on each side, locally. Split/join edits such as `fan basis → Fanbasis` are supported.
+
+The first recognition receives only your manual Vocabulary. An exact observed alias can trigger a second recognition of the same audio with at most six relevant names. Only the proposed substitutions can reach your text; unrelated word changes reject the verification result. Learned words never become blanket prompts or fuzzy replacements.
+
+All aliases additionally require a matching nearby content word on the same side of the name. If both recognition passes keep the same alias, this context can resolve its spelling; casing-only changes still require the verifier's exact spelling. Ordinary words such as “today” and “through” do not count as evidence. For example, learning `payment through WAP → payment through Whop` can help `payment via WAP`, while `Play WAP next` stays unchanged. This is deliberately conservative: new subjects or weak context may require another correction.
+
+The whisper.cpp engine preserves its complete decode and coverage recovery, then uses timestamped regions for longer takes (at most eight verification regions). Other engines verify recordings up to 25 seconds and keep longer results unchanged. Cloud engines use a local small Whisper verifier, with no additional cloud upload; that verifier may download once (~465 MB). No language model is used for learning decisions.
+
+Editing an automatic replacement or deleting its entry saves a persistent rejection. **Allow learning again** clears that rejection. Undo restores earlier evidence. Old saved aliases remain visible but paused until corrected in a new dictation; their original storage is retained for rollback. Learning skips fields whose paste, focus or text cannot be verified through Accessibility.
+
+See [research, design decisions and validation](docs/learned-words-research.md). This is personalization around existing recognizers, not model training or a guarantee against homophone errors.
+
+Run the isolated regression suite without downloading speech models:
+
+```bash
+scripts/test-corrections.sh
+```
+
+The suite uses temporary settings and simulated accessibility reads; it does not change your learned words or type into your apps.
+
 > **First-run downloads (one-time, then cached, all local):** the Parakeet model (~600 MB) downloads on your first dictation. If you enable **Smart cleanup**, the Qwen model (~2 GB for 3B, ~1 GB for 1.5B) downloads on first use.
 
 ## Build from source without the committed project

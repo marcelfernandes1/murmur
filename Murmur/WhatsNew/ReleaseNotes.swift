@@ -24,6 +24,24 @@ enum ReleaseNotes {
     /// Newest first.
     static let all: [Release] = [
         Release(
+            version: "0.5.5",
+            headline: "Learned words with fewer unwanted replacements",
+            highlights: [
+                Highlight(icon: "ear.badge.waveform",
+                          title: "Checks the recording again",
+                          detail: "Learned names apply only to mistakes you actually corrected. The surrounding words must also support the correction."),
+                Highlight(icon: "text.badge.checkmark",
+                          title: "Learns split words too",
+                          detail: "Corrections such as fan basis → Fanbasis can now be remembered."),
+                Highlight(icon: "arrow.uturn.backward",
+                          title: "Remembers rejected corrections",
+                          detail: "Edit an automatic replacement or delete its entry to stop that correction from coming back."),
+                Highlight(icon: "pause.circle",
+                          title: "Teach old entries once more",
+                          detail: "Your previous learned words are saved but paused. Correct one in a full dictated sentence to teach its context.")
+            ]
+        ),
+        Release(
             version: "0.5.3",
             headline: "Cloud transcription, and a lot fewer lost words",
             highlights: [

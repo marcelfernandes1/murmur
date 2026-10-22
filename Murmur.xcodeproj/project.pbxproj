@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C01200000000000000000002 /* LocalLearningVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C01200000000000000000001 /* LocalLearningVerifier.swift */; };
 		027DE01BF46ABB8EDDEBC156 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E4268F3901A1AD7F1593102F /* Assets.xcassets */; };
 		037307826D0FC24F615F9F46 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0ED0A696C3BA3465FB4A19 /* EmptyStateView.swift */; };
 		049A887223BD26F894C4FA9D /* AccessibilityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 418E013920EE917911B19B24 /* AccessibilityManager.swift */; };
@@ -81,6 +82,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C01200000000000000000001 /* LocalLearningVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalLearningVerifier.swift; sourceTree = "<group>"; };
 		0183A1D9406ED6C24CA638ED /* WhisperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperService.swift; sourceTree = "<group>"; };
 		04230C96C421CD64A6E2A53F /* TextInserter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextInserter.swift; sourceTree = "<group>"; };
 		07FD1ACC5BDEAE30E2A102AA /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -235,6 +237,7 @@
 				94E00D67B4D6F775D1A9C080 /* OpenAIFileService.swift */,
 				161F6D001A20E4FD0E8B3A19 /* OpenAIRealtimeService.swift */,
 				1ED8048E32D48DEA392FFA05 /* ParakeetService.swift */,
+				C01200000000000000000001 /* LocalLearningVerifier.swift */,
 				E76380782B3803DF7E4AB52C /* SpeechEngine.swift */,
 				8A870C06FF566F80022B9E7F /* TextCleaner.swift */,
 				D898C82CF4AF8BFEA6BACEFD /* TranscriptCleaner.swift */,
@@ -508,6 +511,7 @@
 				B796BA88287892985EBDF9C4 /* SettingsWindowController.swift in Sources */,
 				50C8AAFBEEB582ED8650490A /* SingleKeyRecorder.swift in Sources */,
 				BEF953F3104975EC0767F26E /* SpaceLockMonitor.swift in Sources */,
+				C01200000000000000000002 /* LocalLearningVerifier.swift in Sources */,
 				91628A18DDBD4C1519F42420 /* SpeechEngine.swift in Sources */,
 				9553343DB2C032FFA88D3326 /* StatusBadge.swift in Sources */,
 				384BCD59A131FB3CA01A0204 /* TextCleaner.swift in Sources */,
@@ -597,7 +601,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 92;
+				CURRENT_PROJECT_VERSION = 93;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -612,7 +616,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.5.4;
+				MARKETING_VERSION = 0.5.5;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.murmur.app;
@@ -662,7 +666,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 92;
+				CURRENT_PROJECT_VERSION = 93;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = M8KUF8S2L5;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -683,7 +687,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.5.4;
+				MARKETING_VERSION = 0.5.5;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

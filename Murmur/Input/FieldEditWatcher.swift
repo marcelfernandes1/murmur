@@ -12,49 +12,66 @@ import AppKit
 /// simply skipped for that dictation.
 @MainActor
 final class FieldEditWatcher {
-    /// Invoked on the main actor when a validated correction is detected.
-    var onCorrection: ((CorrectionDetector.Candidate) -> Void)?
+    /// Observed word edit; the controller checks negative evidence before learning.
+    var onEdit: ((CorrectionDetector.Candidate, [CorrectionStore.AppliedCorrection]) -> Bool)?
 
     private var element: AXUIElement?
     private var baseline = ""
     private var insertedRange: NSRange?
     private var pollTask: Task<Void, Never>?
 
-    private let settleDelay: Duration = .milliseconds(350)   // let the synthetic ⌘V land first
-    private let pollInterval: Duration = .milliseconds(550)
-    private let maxTicks = 55                                 // ~30s watch window, then give up
-    // How long the edited text must stay unchanged before we treat the edit as
-    // finished and learn from it. Kept generously long so a mid-edit pause
-    // (thinking, retyping a word) doesn't get mistaken for a completed edit.
-    private let editSettleDuration: Duration = .seconds(3)
+    struct Access {
+        var focused: () -> AXUIElement?
+        var value: (AXUIElement) -> String?
+        var selection: (AXUIElement) -> NSRange?
+    }
 
-    /// Begin watching for an edit to `insertedText`.
-    ///
-    /// `pastedInto` is the element the text actually went into, captured at
-    /// delivery. Re-resolving focus 350 ms later instead — which is what this
-    /// used to do — could latch onto a completely different field if the user
-    /// clicked away in that window, then snapshot up to 20,000 characters of
-    /// content Murmur never wrote and learn a "correction" from an edit
-    /// somewhere inside it.
-    func start(insertedText: String, pastedInto: AXUIElement?) {
+    struct Timing {
+        var settleDelay: Duration = .milliseconds(350)
+        var pollInterval: Duration = .milliseconds(550)
+        var maxTicks = 55 // ~30 seconds
+        var editSettleDuration: Duration = .seconds(3)
+    }
+
+    private let access: Access
+    private let timing: Timing
+
+    init(access: Access? = nil, timing: Timing = Timing()) {
+        self.access = access ?? Access(focused: Self.focusedElement,
+                                       value: Self.stringValue, selection: Self.selectedRange)
+        self.timing = timing
+    }
+
+    /// Begin watching the currently-focused field for an edit to `insertedText`.
+    func start(insertedText: String, pastedInto: AXUIElement? = nil, applied: [CorrectionStore.AppliedCorrection] = []) {
         cancel()
         Self.diagReset()
-        Self.diag("start: watching for edit, insertedLen=\(insertedText.count) text=“\(insertedText.prefix(60))”")
-        let settle = settleDelay
-        let interval = pollInterval
-        let maxTicks = maxTicks
+        guard let target = pastedInto ?? access.focused(), let beforePaste = access.value(target),
+              (beforePaste as NSString).length <= CorrectionDetector.maxTextLength else { return }
+        let selection = access.selection(target)
+        Self.diag("start: watching for edit, insertedLen=\(insertedText.count)")
+        let settle = timing.settleDelay
+        let interval = timing.pollInterval
+        let maxTicks = timing.maxTicks
         // Number of consecutive unchanged polls required before an edit is
         // considered settled (rounded up so we always cover editSettleDuration).
         let requiredStableTicks = max(
-            1, Int((Self.seconds(editSettleDuration) / Self.seconds(interval)).rounded(.up)))
+            1, Int((Self.seconds(timing.editSettleDuration) / Self.seconds(interval)).rounded(.up)))
         pollTask = Task { [weak self] in
             try? await Task.sleep(for: settle)
             guard let self, !Task.isCancelled else { Self.diag("aborted before snapshot"); return }
-            guard self.snapshot(insertedText: insertedText, element: pastedInto) else {
-                Self.diag("snapshot FAILED — no focused element or value unreadable via AX (app doesn't expose text). Learning skipped.")
+            guard let focused = self.access.focused(), CFEqual(target, focused),
+                  let value = self.access.value(target),
+                  let range = CorrectionDetector.insertionRange(
+                    text: insertedText, before: beforePaste, after: value, selection: selection) else {
+                Self.diag("paste could not be verified in the original field; learning skipped")
+                self.cancel()
                 return
             }
-            Self.diag("snapshot ok: baselineLen=\(self.baseline.count) insertedRange=\(self.insertedRange.map { "\($0)" } ?? "nil") baseline=“\(self.baseline.prefix(80))”")
+            self.element = target
+            self.baseline = value
+            self.insertedRange = range
+            Self.diag("snapshot ok: baselineLen=\(value.count)")
 
             var lastValue = self.baseline
             var stableTicks = 0
@@ -63,7 +80,9 @@ final class FieldEditWatcher {
                 try? await Task.sleep(for: interval)
                 ticks += 1
                 guard !Task.isCancelled else { break }
-                guard let current = Self.stringValue(of: el) else { Self.diag("value unreadable at tick \(ticks) — stopping"); break }
+                guard let focused = self.access.focused(), CFEqual(el, focused),
+                      let current = self.access.value(el),
+                      (current as NSString).length <= CorrectionDetector.maxTextLength else { break }
                 if current == self.baseline {
                     lastValue = current
                     stableTicks = 0
@@ -76,15 +95,16 @@ final class FieldEditWatcher {
                 if current == lastValue {
                     stableTicks += 1
                     if stableTicks >= requiredStableTicks {
-                        let candidate = CorrectionDetector.candidate(
+                        let candidate = CorrectionDetector.edit(
                             before: self.baseline, after: current, insertedRange: self.insertedRange)
                         if let candidate {
-                            Self.diag("CANDIDATE found after \(stableTicks) stable ticks: “\(candidate.heard)” → “\(candidate.corrected)”")
-                            self.onCorrection?(candidate)
-                            self.cancel()
-                            return
+                            Self.diag("word edit found after \(stableTicks) stable ticks")
+                            if self.onEdit?(candidate, applied) == true {
+                                self.cancel()
+                                return
+                            }
                         } else {
-                            Self.diag("edit settled but NO candidate. before=“\(self.baseline.prefix(80))” after=“\(current.prefix(80))” range=\(self.insertedRange.map { "\($0)" } ?? "nil")")
+                            Self.diag("edit settled but no single-word edit within insertion")
                         }
                     }
                 } else {
@@ -92,15 +112,16 @@ final class FieldEditWatcher {
                 }
                 lastValue = current
             }
+            // A cancelled older task must never tear down a newer watch session.
+            guard !Task.isCancelled else { return }
             Self.diag("watch window ended after \(ticks) ticks with no learnable edit")
             self.cancel()
         }
     }
 
     // MARK: - Diagnostics (DEBUG-only)
-    // These messages include the inserted transcript and the focused field's
-    // contents, so they must NEVER be written to disk in a shipping build (the app
-    // is unsandboxed; /tmp is world-readable). Compiled out entirely in release.
+    // Metadata only: never log transcript or surrounding field contents.
+    // Compiled out entirely in release.
     #if DEBUG
     private static let diagURL = URL(fileURLWithPath: "/tmp/murmur_learn.log")
     #endif
@@ -127,49 +148,6 @@ final class FieldEditWatcher {
         element = nil
     }
 
-    // MARK: - Snapshot
-
-    /// Capture the focused element and its post-paste value/insertion point.
-    /// Returns false if there's nothing readable to watch.
-    private func snapshot(insertedText: String, element candidate: AXUIElement?) -> Bool {
-        // Only the element we pasted into. No fallback to whatever has focus now.
-        guard let el = candidate, let value = Self.stringValue(of: el) else { return false }
-        guard value.count <= 20_000 else { return false }   // don't diff huge documents
-        guard let range = Self.locateInsertion(of: insertedText, in: value,
-                                               caret: Self.selectedRange(of: el)) else {
-            // Our text isn't in there — either the paste didn't land or this is
-            // not the field we wrote to. Without a known insertion span the
-            // containment check cannot run, and anything "learned" would come
-            // from content the user never dictated.
-            Self.diag("snapshot rejected: inserted text not found in the pasted element")
-            return false
-        }
-        element = el
-        baseline = value
-        insertedRange = range
-        return true
-    }
-
-    /// Work out where our text landed: the caret sits at the end of a paste, so
-    /// the inserted span is the `insertedText`-length run ending there. Fall back
-    /// to the last literal occurrence if the caret isn't available.
-    private static func locateInsertion(of insertedText: String, in value: String, caret: NSRange?) -> NSRange? {
-        let ns = value as NSString
-        let length = (insertedText as NSString).length
-        if let caret, caret.location != NSNotFound {
-            let end = caret.location + caret.length
-            let start = end - length
-            if start >= 0, end <= ns.length {
-                let range = NSRange(location: start, length: length)
-                if ns.substring(with: range).caseInsensitiveCompare(insertedText) == .orderedSame {
-                    return range
-                }
-            }
-        }
-        let found = ns.range(of: insertedText, options: .backwards)
-        return found.location == NSNotFound ? nil : found
-    }
-
     /// A `Duration` as a `Double` count of seconds (used to size the poll loop).
     private static func seconds(_ duration: Duration) -> Double {
         let c = duration.components
@@ -179,11 +157,18 @@ final class FieldEditWatcher {
     // MARK: - AX reads
 
     private static func focusedElement() -> AXUIElement? {
-        let system = AXUIElementCreateSystemWide()
-        var ref: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &ref) == .success,
-              let value = ref, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-        return (value as! AXUIElement)
+        var roots = [AXUIElementCreateSystemWide()]
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier {
+            roots.append(AXUIElementCreateApplication(pid))
+        }
+        for root in roots {
+            var ref: CFTypeRef?
+            if AXUIElementCopyAttributeValue(root, kAXFocusedUIElementAttribute as CFString, &ref) == .success,
+               let value = ref, CFGetTypeID(value) == AXUIElementGetTypeID() {
+                return (value as! AXUIElement)
+            }
+        }
+        return nil
     }
 
     private static func stringValue(of element: AXUIElement) -> String? {

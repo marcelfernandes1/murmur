@@ -22,7 +22,7 @@ MURMUR_TEST_CAPTURE=1 \
 MURMUR_TEST_COVERAGE=1 \
 MURMUR_TEST_CORRECTIONS=1 \
 MURMUR_TEST_EXIT=1 \
-  "$BIN" 2>&1 | grep -E "^\[(CaptureOutcome|Coverage|PromptEcho|WAV|CorrectionDetector|CorrectionStore|SelfTest)\]"
+  "$BIN" 2>&1 | grep -E "^\[(CaptureOutcome|Coverage|PromptEcho|WAV|CorrectionDetector|CorrectionStore|LearningPlan|SelfTest)\]"
 status=${PIPESTATUS[0]}
 set -e
 
