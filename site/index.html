@@ -466,10 +466,10 @@ footer{padding:60px 0 50px;border-top:1px solid var(--line);position:relative;z-
 .windows-download h3{font-size:26px;letter-spacing:-.025em;margin-bottom:8px}
 .windows-download p{color:var(--ink-2);margin:14px 0;line-height:1.65}
 .windows-download .status{display:inline-block;color:#d4c8ff;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
-.windows-download .btn{margin-top:12px}
+.windows-download .btn{margin-top:12px;max-width:100%;white-space:normal;text-align:center}
 .windows-download .requirements{font-size:13px;margin-top:24px;color:var(--ink-2)}
 .windows-download .policy{font-size:12px;text-decoration:underline;text-underline-offset:3px;color:var(--ink-2)}
-@media(max-width:760px){.windows-layout{grid-template-columns:1fr;gap:28px}.windows-download{padding:28px}.windows-release{padding-top:60px}}
+@media(max-width:760px){.windows-layout{grid-template-columns:minmax(0,1fr);gap:28px}.windows-download{padding:28px;min-width:0}.windows-release{padding-top:60px}}
 @media(max-width:480px){header.nav{padding:12px}.nav-inner{padding-left:12px}.nav-cta .btn-ghost{display:none}.nav-cta .btn-primary{padding:12px 18px}}
 
 /* reduce motion */
