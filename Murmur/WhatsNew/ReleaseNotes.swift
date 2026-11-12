@@ -29,13 +29,13 @@ enum ReleaseNotes {
             highlights: [
                 Highlight(icon: "waveform",
                           title: "Better detection of quiet speech",
-                          detail: "Quiet recordings and short words can reach the speech model instead of being mistaken for silence."),
+                          detail: "Recordings with usable audio reach the speech model even when the volume-based speech detector is unsure."),
                 Highlight(icon: "text.alignleft",
                           title: "Keeps quiet sentence endings",
                           detail: "Murmur no longer removes an ending just because you lowered your voice. It also allows for small timing errors in the transcript."),
                 Highlight(icon: "mic.badge.xmark",
                           title: "Clearer recording failures",
-                          detail: "A microphone error ends recording promptly. If no speech or text is detected, Murmur tells you instead of silently dismissing the recording.")
+                          detail: "A microphone error ends recording promptly. If the microphone returns no audio or the model returns no text, Murmur tells you instead of silently dismissing the recording.")
             ]
         ),
         Release(
