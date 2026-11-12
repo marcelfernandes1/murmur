@@ -417,15 +417,61 @@ final class AudioRecorder: @unchecked Sendable {
 
     /// A render-callback `AudioUnitRender` failure (typically the selected device
     /// was unplugged mid-capture). Stop the dead unit cleanly so the device is
-    /// released; leave the captured samples intact so the take still finalizes on
-    /// key release. Never crashes on a stale pointer — `stop()` is idempotent and
+    /// released; notify the controller so it finalizes the saved audio immediately
+    /// instead of leaving a listening indicator over a dead input. `stop()` is idempotent and
     /// Core Audio guarantees no further callbacks after it returns.
     private func handleRenderError(status: OSStatus, generation: Int) {
         lifecycleQueue.async { [weak self] in
-            guard let self, generation == self.captureGeneration else { return }
-            self.diag("render error \(osStatusString(status)) → stopping unit; capture will finalize on release (samples=\(self.snapshotCount()))")
+            guard let self, self.capturing, generation == self.captureGeneration else { return }
+            self.diag("render error \(osStatusString(status)) → stopping unit and reporting capture failure (samples=\(self.snapshotCount()))")
+            self.capturing = false
+            self.captureGeneration &+= 1
             self.teardownUnitLocked()
+            let error = AUHALInputUnit.AUHALError(stage: "render", status: status)
+            self.resolveStart(.failure(error))
+            self.onCaptureFailed?(error)
         }
+    }
+
+    /// Exercises failure delivery and stale-callback handling without opening
+    /// an audio device. All test state is observed after the lifecycle barrier.
+    static func runFailureSelfTest() -> Int {
+        final class Probe: @unchecked Sendable {
+            var notifications = 0
+            var failedStarts = 0
+        }
+        let probe = Probe()
+        let recorder = AudioRecorder()
+        let saved: [Float] = [0.01, -0.02, 0.03]
+        recorder.lifecycleQueue.sync {
+            recorder.capturing = true
+            recorder.captureGeneration = 2
+            recorder.lock.lock()
+            recorder.samples = saved
+            recorder.lock.unlock()
+            recorder.pendingStart = { result in
+                if case .failure = result { probe.failedStarts += 1 }
+            }
+            recorder.onCaptureFailed = { _ in probe.notifications += 1 }
+        }
+        var failures = 0
+        func check(_ name: String, _ passed: Bool) {
+            print("[CaptureFailure] \(passed ? "PASS" : "FAIL") \(name)")
+            if !passed { failures += 1 }
+        }
+        recorder.handleRenderError(status: -1, generation: 1)
+        recorder.lifecycleQueue.sync {
+            check("stale error leaves newer capture running", recorder.capturing && probe.notifications == 0)
+        }
+        recorder.handleRenderError(status: -1, generation: 2)
+        recorder.handleRenderError(status: -1, generation: 2)
+        recorder.lifecycleQueue.sync {
+            check("failed input stops capture", !recorder.capturing)
+            check("failure reaches controller exactly once", probe.notifications == 1)
+            check("waiting start resolves exactly once", probe.failedStarts == 1 && recorder.pendingStart == nil)
+            check("saved audio survives input failure", recorder.snapshot() == saved)
+        }
+        return failures
     }
 
     // MARK: - Device resolution (runs on `lifecycleQueue`)

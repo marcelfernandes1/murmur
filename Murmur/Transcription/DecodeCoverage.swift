@@ -42,9 +42,10 @@ enum DecodeCoverage {
 
     /// A frame must stand this far above the take's noise floor to be speech.
     static let speechFloorMultiple: Float = 3.0
-    /// …and clear this absolute level, so digital silence (where the floor is
-    /// zero) can never qualify.
-    static let minSpeechLevel: Float = 0.004
+    /// Only exclude near-digital silence by absolute level. Whisper correctly
+    /// decodes quiet speech far below the old 0.004 RMS cutoff; applying that
+    /// cutoff before inference discarded recordings the model could understand.
+    static let minSpeechLevel: Float = 0.0001
     /// A frame this loud is speech whatever the floor says. Needed because the
     /// ratio test alone fails on a loud noise floor — speech recorded next to a
     /// fan does not tower over the fan — while room tone never reaches this
@@ -52,13 +53,13 @@ enum DecodeCoverage {
     static let absoluteSpeechLevel: Float = 0.02
     /// Total speech needed anywhere in the take for it to be worth decoding.
     /// Shorter than the briefest real one-word dictation.
-    static let minSpeechSecondsInTake = 0.2
+    static let minSpeechSecondsInTake = 0.08
 
-    /// Whether these samples contain anything worth transcribing. False means a
-    /// silent take: decoding it would invent words, so the caller should not.
+    /// Conservative energy-based speech screening. A negative result can still
+    /// be a false negative, so the controller must surface it to the user.
     static func containsSpeech(_ samples: [Float], sampleRate: Int = sampleRate) -> Bool {
         let levels = frameLevels(samples[samples.startIndex..<samples.endIndex],
-                                 frame: max(1, sampleRate / 10))
+                                 frame: max(1, sampleRate / 50))
         guard !levels.isEmpty else { return false }
         return speechSeconds(levels: levels, reference: noiseFloor(of: levels)) >= minSpeechSecondsInTake
     }
@@ -79,7 +80,9 @@ enum DecodeCoverage {
     /// trailing silence (the common, legitimate case) costs nothing.
     static let minGapSpeechSeconds = 0.6
     /// Level metering frame for the speech check.
-    static let energyFrameSamples = sampleRate / 10   // 100 ms
+    // 20 ms preserves short syllables and the quiet intervals between them.
+    // 100 ms smeared them together, raising the estimated noise floor.
+    static let energyFrameSamples = sampleRate / 50
 
     /// A stretch of the samples that no segment accounts for.
     struct Gap: Equatable {
@@ -128,21 +131,23 @@ enum DecodeCoverage {
     // text against a list of known whisper tics — which would never be complete —
     // trailing segments are dropped when there is no speech underneath them.
 
-    /// A trailing segment is only ever dropped if it holds less speech than this.
-    static let maxFabricatedTailSpeechSeconds = 0.15
-    /// …and is short. Real invented closings are; the cap bounds what a bad
+    /// Approximate segment timestamps can lag the words. Include surrounding
+    /// audio before deciding that a segment lies entirely over silence.
+    static let tailTimestampPadding = 0.35
+    /// Only trim short segments. The cap bounds what a bad
     /// timestamp could cost to a few words rather than a sentence. Measured in
     /// characters as well as words, because whitespace-splitting counts a whole
     /// Chinese/Japanese/Korean sentence as one "word" and would bound nothing.
     static let maxFabricatedTailWords = 10
     static let maxFabricatedTailCharacters = 60
 
-    /// Drop trailing segments that sit on silence — whisper talking to itself
-    /// after the speaker stopped. Stops at the first segment with speech under
-    /// it, so nothing before the real end of the dictation is ever considered.
+    /// Remove only tails sitting entirely on near-digital silence, including
+    /// timestamp padding. Failing an energy-based speech test is NOT evidence
+    /// that decoded words were invented: a quiet ending, a brief word, or room
+    /// noise can all fail it. Preserve those ambiguous segments.
     static func trimmingFabricatedTail(_ segments: [WhisperSegment],
                                        samples: [Float],
-                                       reference: Float) -> [WhisperSegment] {
+                                       reference _: Float) -> [WhisperSegment] {
         var result = segments.sorted { $0.start < $1.start }
         // Never trim the take down to nothing. If every segment looks fabricated
         // the timestamps are not trustworthy, and delivering whisper's best guess
@@ -154,7 +159,9 @@ enum DecodeCoverage {
             guard end > start else { break }
             guard last.text.split(whereSeparator: \.isWhitespace).count <= maxFabricatedTailWords,
                   last.text.count <= maxFabricatedTailCharacters else { break }
-            guard speechSeconds(samples[start..<end], reference: reference) < maxFabricatedTailSpeechSeconds else { break }
+            let paddedStart = clampToSamples(last.start - tailTimestampPadding, limit: samples.count)
+            let paddedEnd = clampToSamples(last.end + tailTimestampPadding, limit: samples.count)
+            guard samples[paddedStart..<paddedEnd].allSatisfy({ $0.isFinite && abs($0) <= minSpeechLevel }) else { break }
             result.removeLast()
         }
         return result
@@ -170,7 +177,10 @@ enum DecodeCoverage {
 
     /// Seconds of speech-level audio inside `slice`.
     static func speechSeconds(_ slice: ArraySlice<Float>, reference: Float) -> Double {
-        speechSeconds(levels: frameLevels(slice), reference: reference)
+        let levels = frameLevels(slice)
+        // A quiet later sentence must not be measured against the louder
+        // beginning's floor when checking a missing portion of the transcript.
+        return speechSeconds(levels: levels, reference: min(reference, noiseFloor(of: levels)))
     }
 
     /// Speech must clear both bars: well above this take's own noise floor, and
