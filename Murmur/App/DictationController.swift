@@ -105,19 +105,18 @@ final class DictationController {
         case accidentalTap   // too short to be real + the trigger was barely held
         case noAudio         // held a real beat but the engine delivered ~nothing
         case noSignal        // audio arrived but it's digital silence (dead mic)
-        case noSpeech        // the mic works, there was just nothing said
         case transcribe      // good buffer — go transcribe it
     }
 
     /// `held` is the wall-clock trigger hold (nil if unknown ⇒ never an accidental tap).
-    /// `hasSpeech` comes from `DecodeCoverage.containsSpeech`.
+    /// Energy heuristics cannot veto usable audio. Continuous speech, input
+    /// processing and background noise can all make their "noise floor" wrong.
     static func captureOutcome(sampleCount: Int, held: Duration?, peak: Float, hasSpeech: Bool) -> CaptureOutcome {
         if sampleCount < 1_600 { // < 0.1 s at 16 kHz
             if let held, held < minIntentionalHold { return .accidentalTap }
             return .noAudio
         }
         if peak < 0.0005 { return .noSignal }
-        if !hasSpeech { return .noSpeech }
         return .transcribe
     }
 
@@ -667,14 +666,11 @@ final class DictationController {
             // device, etc.). Transcribing that is pointless — flag it instead.
             flagError(.error("No microphone signal"), notch: "No mic signal — check input & permission")
             return
-        case .noSpeech:
-            // The energy check is a heuristic, not proof that nothing was said.
-            // Never make a deliberate recording disappear without an explanation.
-            Self.audioLog.log("no speech detected in \(duration, privacy: .public)s take (peak \(peak, privacy: .public))")
-            flagError(.error("No speech detected"), notch: "No speech detected — check your microphone")
-            return
         case .transcribe:
             break
+        }
+        if !hasSpeech {
+            Self.audioLog.log("energy screen uncertain — transcribing \(duration, privacy: .public)s of captured audio without vocabulary hints")
         }
 
         // A real recording is ending — the "let go / press to insert" cue.
@@ -727,7 +723,10 @@ final class DictationController {
             let signposter = Self.signposter
             do {
                 let transcribeState = signposter.beginInterval("transcribe")
-                let vocabulary = biasVocabulary()
+                // An energy-only screen can mistake the speaker's own voice
+                // for the noise floor. Always decode the recording; on uncertain
+                // audio omit prompt hints so room tone cannot echo the dictionary.
+                let vocabulary = hasSpeech ? biasVocabulary() : []
                 let startedAt = ContinuousClock.now
                 var text: String
                 var personalized: PersonalizedTranscript?
@@ -798,6 +797,7 @@ final class DictationController {
                 // (or this one was discarded) while we were transcribing/polishing, it
                 // must not paste into the new field or overwrite fresher UI state.
                 guard !Task.isCancelled, generation == dictationGeneration else { return }
+                Self.audioLog.log("transcription result: audio=\(duration, privacy: .public)s rawCharacters=\(rawTranscript.count, privacy: .public) finalCharacters=\(text.count, privacy: .public)")
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     awaitingResult = false
                     transcribeWatchdog?.cancel()
@@ -881,12 +881,14 @@ final class DictationController {
             .init(name: "valid dictation (3 s)", samples: 48_000, held: .seconds(3), peak: 0.3, expect: .transcribe),
             // A short-but-real word (held past the threshold, audible) transcribes.
             .init(name: "short word (600 ms, audible)", samples: 9_600, held: .milliseconds(600), peak: 0.15, expect: .transcribe),
-            // The reported bug: a working mic, nothing said. Must not reach the
-            // engine — it would invent words or echo the vocabulary back.
-            .init(name: "room tone, nothing said", samples: 15_000, held: .seconds(1), peak: 0.0033,
-                  hasSpeech: false, expect: .noSpeech),
-            .init(name: "long take of room tone", samples: 48_000, held: .seconds(3), peak: 0.0089,
-                  hasSpeech: false, expect: .noSpeech),
+            // Real failed takes: the waveform moved and the buffer was intact,
+            // but the energy screen vetoed both before recognition was attempted.
+            .init(name: "reported 3.189s take reaches recognition", samples: 51_024, held: .seconds(3.189), peak: 0.044880,
+                  hasSpeech: false, expect: .transcribe),
+            .init(name: "reported 3.925s take reaches recognition", samples: 62_800, held: .seconds(3.925), peak: 0.050308,
+                  hasSpeech: false, expect: .transcribe),
+            .init(name: "uncertain quiet audio is decoded without hints", samples: 15_000, held: .seconds(1), peak: 0.0033,
+                  hasSpeech: false, expect: .transcribe),
             // A dead mic is still reported as a dead mic, not as "nothing said".
             .init(name: "dead mic outranks no-speech", samples: 48_000, held: .seconds(3), peak: 0.0001,
                   hasSpeech: false, expect: .noSignal),

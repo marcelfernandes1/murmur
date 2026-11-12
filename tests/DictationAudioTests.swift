@@ -40,6 +40,11 @@ struct DictationAudioTests {
         let fading = speech.enumerated().map { index, value in
             value / peak * (index < speech.count / 2 ? Float(0.06) : Float(0.002))
         }
+        // A stable input offset raises the energy floor without hiding the
+        // words from Whisper. This reproduces a moving waveform that the energy
+        // screen calls "no speech", even at the observed ~0.05 peak level.
+        let raisedFloor = speech.map { $0 * 0.04 / peak + 0.01 }
+        check("raised-floor fixture exercises energy false negative", !DecodeCoverage.containsSpeech(raisedFloor))
         check("quiet second half remains intact",
               DecodeCoverage.trimmingFabricatedTail(segments, samples: fading,
                   reference: DecodeCoverage.speechReferenceLevel(fading)) == segments)
@@ -72,7 +77,7 @@ struct DictationAudioTests {
                 print("[DictationAudio] FAIL could not load requested model")
                 exit(1)
             }
-            for (name, samples) in [("quiet", speech.map { $0 * 0.002 / peak }), ("fading", fading)] {
+            for (name, samples) in [("quiet", speech.map { $0 * 0.002 / peak }), ("fading", fading), ("raised-floor", raisedFloor)] {
                 guard let decoded = model.transcribe(samples: samples, language: "en", vocabulary: []) else {
                     check("\(name) model decode", false)
                     continue
@@ -81,8 +86,7 @@ struct DictationAudioTests {
                     reference: DecodeCoverage.speechReferenceLevel(samples))
                 let text = kept.map(\.text).joined(separator: " ").lowercased()
                 check("\(name) actual model keeps beginning, middle and end",
-                      DecodeCoverage.containsSpeech(samples)
-                      && text.contains("keep every word")
+                      text.contains("keep every word")
                       && text.contains("explains the problem")
                       && text.contains("final sentence must remain complete"))
             }
