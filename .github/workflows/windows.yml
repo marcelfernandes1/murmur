@@ -1,0 +1,74 @@
+name: Murmur Windows
+on:
+  push:
+    branches: [main, 'codex/murmur-windows*']
+    paths: ['windows/**', '.github/workflows/windows.yml']
+  pull_request:
+    paths: ['windows/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test behavior and recovery
+        run: dotnet test windows/Murmur.Tests/Murmur.Tests.csproj -c Release --filter 'Category!=Integration' --logger trx
+      - name: Download speech fixture
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory fixtures | Out-Null
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.1/samples/jfk.wav' -OutFile fixtures/jfk.wav
+          Invoke-WebRequest 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin?download=true' -OutFile fixtures/ggml-tiny.bin
+      - name: Test native Windows speech recognition
+        shell: pwsh
+        run: |
+          $env:MURMUR_TEST_MODELS = (Resolve-Path fixtures).Path
+          $env:MURMUR_TEST_WAV = (Resolve-Path fixtures/jfk.wav).Path
+          dotnet test windows/Murmur.Tests/Murmur.Tests.csproj -c Release --filter 'Category=Integration' --logger trx
+      - name: Package app and installer
+        shell: pwsh
+        run: ./windows/scripts/publish.ps1 -Installer
+      - name: Check unsigned builds cannot pass release signing verification
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem windows/artifacts/Murmur-Windows-*-Setup.exe | Select-Object -First 1
+          $rejected = $false
+          try {
+            ./windows/scripts/verify-signatures.ps1 -AppDirectory windows/artifacts/Murmur-win-x64 -InstallerPath $setup.FullName -ExpectedSignerThumbprint ('0' * 40)
+          } catch {
+            if ($_.Exception.Message -notlike 'Windows release signing gate failed:*') { throw }
+            $rejected = $true
+          }
+          if (!$rejected) { throw 'An unsigned build passed the release gate.' }
+          Write-Host 'PASS: unsigned preview cannot be published as a signed release.'
+      - name: Prepare virtual microphone
+        continue-on-error: true
+        shell: pwsh
+        run: ./windows/scripts/prepare-virtual-microphone.ps1 -Output "${{ runner.temp }}/murmur-audio"
+      - name: Test Windows capture and cross-app paste
+        timeout-minutes: 6
+        shell: pwsh
+        run: dotnet run --project windows/Murmur.Windows.IntegrationTests/Murmur.Windows.IntegrationTests.csproj -c Release -- fixtures windows/artifacts/verification
+      - name: Test Windows setup and single-instance behavior
+        if: success() || failure()
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem windows/artifacts/Murmur-Windows-*-Setup.exe | Select-Object -First 1
+          ./windows/scripts/test-installer.ps1 -InstallerPath $setup.FullName -Output windows/artifacts/verification
+      - name: Upload Windows build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Murmur-Windows-x64
+          path: |
+            windows/artifacts/Murmur-Windows-*
+            windows/artifacts/verification/*.*
+            windows/Murmur.Tests/TestResults/*.trx
+          if-no-files-found: error

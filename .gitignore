@@ -27,3 +27,10 @@ notary.env
 
 # macOS
 .DS_Store
+
+# Windows / .NET
+**/bin/
+**/obj/
+**/TestResults/
+.vs/
+windows/artifacts/
