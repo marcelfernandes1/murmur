@@ -214,6 +214,7 @@ final class DictationController {
         if env["MURMUR_TEST_CAPTURE"] != nil {
             ranTests = true
             testFailures += Self.runCaptureSelfTest()
+            testFailures += AudioRecorder.runFailureSelfTest()
         }
         if env["MURMUR_TEST_COVERAGE"] != nil {
             ranTests = true
@@ -616,7 +617,7 @@ final class DictationController {
 
     /// Stop capturing and run the transcribe → deliver pipeline. Fired by releasing
     /// the trigger (push-to-talk) or by pressing it again after a hands-free lock.
-    private func commitRecording() {
+    private func commitRecording(reason: StopReason = .hotkeyReleased) {
         guard isRecording else { return }
         // If capture hasn't actually gone live yet (slow Bluetooth start), defer the
         // commit: the start Task re-invokes commitRecording the moment it's live, so
@@ -637,7 +638,7 @@ final class DictationController {
         streamTask?.cancel()
         streamTask = nil
 
-        let samples = recorder.stop(reason: .hotkeyReleased)
+        let samples = recorder.stop(reason: reason)
         let held = holdAtRelease ?? recordingStartedAt.map { recordingClock.now - $0 }
         holdAtRelease = nil
         recordingStartedAt = nil
@@ -667,15 +668,10 @@ final class DictationController {
             flagError(.error("No microphone signal"), notch: "No mic signal — check input & permission")
             return
         case .noSpeech:
-            // The mic was working; nothing was said. Transcribing this is worse
-            // than useless — whisper does not return an empty string for silence,
-            // it invents one, and with a custom vocabulary loaded it just echoes
-            // the vocabulary back ("VTURB, Whop, Fernandes"). Drop it the way an
-            // accidental tap is dropped: quietly, with nothing pasted and nothing
-            // written to history.
-            Self.audioLog.log("no speech in \(duration, privacy: .public)s take (peak \(peak, privacy: .public)) → discarded without transcribing")
-            appState.status = .idle
-            notch.dismiss()
+            // The energy check is a heuristic, not proof that nothing was said.
+            // Never make a deliberate recording disappear without an explanation.
+            Self.audioLog.log("no speech detected in \(duration, privacy: .public)s take (peak \(peak, privacy: .public))")
+            flagError(.error("No speech detected"), notch: "No speech detected — check your microphone")
             return
         case .transcribe:
             break
@@ -802,6 +798,12 @@ final class DictationController {
                 // (or this one was discarded) while we were transcribing/polishing, it
                 // must not paste into the new field or overwrite fresher UI state.
                 guard !Task.isCancelled, generation == dictationGeneration else { return }
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    awaitingResult = false
+                    transcribeWatchdog?.cancel()
+                    flagError(.error("No transcription returned"), notch: "No transcription returned — please try again")
+                    return
+                }
                 // Cleanup may shift text. Retain only unambiguous receipts so
                 // rejecting a replacement can never retire an unrelated rule.
                 let applied = LearningPlan.relocate(personalized?.applications ?? [], into: text)
@@ -825,7 +827,7 @@ final class DictationController {
         guard isRecording else { return }
         Self.audioLog.error("capture failed mid-take: \(error.localizedDescription, privacy: .public) — finalizing what was captured")
         if captureLive {
-            commitRecording()
+            commitRecording(reason: .captureFailed)
         } else {
             isRecording = false
             isLocked = false
