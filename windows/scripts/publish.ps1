@@ -1,6 +1,7 @@
 param([string]$Output = (Join-Path $PSScriptRoot '../artifacts'), [switch]$Installer)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+$version = ([xml](Get-Content "$root/Directory.Build.props")).Project.PropertyGroup.Version
 $Output = [IO.Path]::GetFullPath($Output)
 $app = Join-Path $Output 'Murmur-win-x64'
 New-Item -ItemType Directory -Force -Path $app | Out-Null
@@ -16,17 +17,17 @@ if (!(Test-Path "$app/Murmur.exe") -or !(Test-Path "$app/Cleanup/Murmur.Cleanup.
 Get-ChildItem "$app/runtimes" -Directory | Where-Object { $_.Name -notin @('win-x64', 'noavx') } | Remove-Item -Recurse -Force
 Get-ChildItem "$app/runtimes/noavx" -Directory | Where-Object { $_.Name -ne 'win-x64' } | Remove-Item -Recurse -Force
 Remove-Item "$app/ggml-metal.metal" -ErrorAction SilentlyContinue
-Compress-Archive -Path "$app/*" -DestinationPath "$Output/Murmur-Windows-0.1.0-x64.zip" -Force
+Compress-Archive -Path "$app/*" -DestinationPath "$Output/Murmur-Windows-$version-x64.zip" -Force
 if ($Installer) {
     # Bundle Microsoft's signed redistributable for PCs without the native runtime.
     $redist = Join-Path $Output 'VC_redist.x64.exe'
-    Invoke-WebRequest 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $redist
+    Invoke-WebRequest 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $redist -TimeoutSec 120
     $signature = Get-AuthenticodeSignature $redist
     if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw 'The Microsoft runtime signature could not be verified.' }
     $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue
     if (!$compiler) { $compiler = Get-Item "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" -ErrorAction Stop }
     $compilerPath = if ($compiler -is [System.Management.Automation.ApplicationInfo]) { $compiler.Source } else { $compiler.FullName }
-    & $compilerPath "/DAppSource=$app" "/DOutput=$Output" "/DRedist=$redist" "$PSScriptRoot/installer.iss"
+    & $compilerPath "/DAppSource=$app" "/DOutput=$Output" "/DRedist=$redist" "/DAppVersion=$version" "$PSScriptRoot/installer.iss"
     if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
 }
 Get-ChildItem $Output -File | Where-Object { $_.Name -like 'Murmur-Windows-*' } | ForEach-Object {

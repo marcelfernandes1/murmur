@@ -4,7 +4,7 @@
 [Setup]
 AppId={{82573EF4-10A9-4512-A8B3-9C9DFE768B00}
 AppName=Murmur
-AppVersion=0.1.0
+AppVersion={#AppVersion}
 AppPublisher=Murmur
 DefaultDirName={localappdata}\Programs\Murmur
 DefaultGroupName=Murmur
@@ -13,7 +13,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19041
 OutputDir={#Output}
-OutputBaseFilename=Murmur-Windows-0.1.0-x64-Setup
+OutputBaseFilename=Murmur-Windows-{#AppVersion}-x64-Setup
 SetupIconFile=..\Murmur.Windows\Assets\murmur.ico
 UninstallDisplayIcon={app}\Murmur.exe
 Compression=lzma2

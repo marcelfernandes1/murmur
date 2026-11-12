@@ -164,7 +164,9 @@ internal sealed class DictationController
                 catch (Exception e)
                 {
                     session.Cancel();
-                    SetStatus(FriendlyError(e, "Microphone unavailable. Check Windows microphone privacy and select an available microphone."), show: true);
+                    SetStatus(e is UnauthorizedAccessException
+                        ? "Windows blocked microphone access. Open Microphone privacy and allow desktop apps to use your microphone."
+                        : FriendlyError(e, "Microphone unavailable. Check Windows microphone privacy and select an available microphone."), show: true);
                 }
                 break;
             case SessionAction.Lock: SetStatus("Hands-free. Press your shortcut to finish.", show: true); break;

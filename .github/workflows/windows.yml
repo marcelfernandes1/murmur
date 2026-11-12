@@ -34,6 +34,19 @@ jobs:
       - name: Package app and installer
         shell: pwsh
         run: ./windows/scripts/publish.ps1 -Installer
+      - name: Check unsigned builds cannot pass release signing verification
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem windows/artifacts/Murmur-Windows-*-Setup.exe | Select-Object -First 1
+          $rejected = $false
+          try {
+            ./windows/scripts/verify-signatures.ps1 -AppDirectory windows/artifacts/Murmur-win-x64 -InstallerPath $setup.FullName -ExpectedSignerThumbprint ('0' * 40)
+          } catch {
+            if ($_.Exception.Message -notlike 'Windows release signing gate failed:*') { throw }
+            $rejected = $true
+          }
+          if (!$rejected) { throw 'An unsigned build passed the release gate.' }
+          Write-Host 'PASS: unsigned preview cannot be published as a signed release.'
       - name: Prepare virtual microphone
         continue-on-error: true
         shell: pwsh
@@ -44,8 +57,11 @@ jobs:
         run: dotnet run --project windows/Murmur.Windows.IntegrationTests/Murmur.Windows.IntegrationTests.csproj -c Release -- fixtures windows/artifacts/verification
       - name: Test Windows setup and single-instance behavior
         if: success() || failure()
+        timeout-minutes: 4
         shell: pwsh
-        run: ./windows/scripts/smoke-test.ps1 -AppPath windows/artifacts/Murmur-win-x64/Murmur.exe -Output windows/artifacts/verification
+        run: |
+          $setup = Get-ChildItem windows/artifacts/Murmur-Windows-*-Setup.exe | Select-Object -First 1
+          ./windows/scripts/test-installer.ps1 -InstallerPath $setup.FullName -Output windows/artifacts/verification
       - name: Upload Windows build
         if: always()
         uses: actions/upload-artifact@v4

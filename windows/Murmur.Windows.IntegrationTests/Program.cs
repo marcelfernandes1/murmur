@@ -100,7 +100,7 @@ internal static class Program
 
         await Check("Unicode paste into Notepad", async () =>
         {
-            await Focus(noteWindow, noteEditor); ClearSelection();
+            await Focus(noteWindow, noteEditor); await SelectAll();
             const string text = "Murmur — São Paulo, 日本語, café.\r\nSecond line.";
             var target = TextDelivery.CaptureTarget();
             var message = await TextDelivery.DeliverAsync(text, target, default);
@@ -112,8 +112,10 @@ internal static class Program
         await Check("Captured speech pastes into Notepad", async () =>
         {
             Assert(recognized.Length > 0, "No captured speech is available.");
-            await Focus(noteWindow, noteEditor); ClearSelection();
-            await TextDelivery.DeliverAsync(recognized, TextDelivery.CaptureTarget(), default);
+            await Focus(noteWindow, noteEditor); await SelectAll();
+            var target = TextDelivery.CaptureTarget();
+            var message = await TextDelivery.DeliverAsync(recognized, target, default);
+            Console.WriteLine($"Captured-speech delivery: {message}; before={target}; after={TextDelivery.CaptureTarget()}");
             await WaitForText(noteEditor, recognized);
             SaveDesktop("notepad-captured-speech.png");
         });
@@ -222,10 +224,13 @@ internal static class Program
     }
     private static async Task Focus(nint window, AutomationElement element)
     {
-        Native.ShowWindow(window, 9);
-        Native.Key(0x12, false); await Task.Delay(50); Native.Key(0x12, true); await Task.Delay(50);
-        Native.SetForegroundWindow(window);
-        await Task.Delay(200);
+        if (NativeMethods.GetForegroundWindow() != window)
+        {
+            Native.ShowWindow(window, 9);
+            Native.Key(0x12, false); await Task.Delay(50); Native.Key(0x12, true); await Task.Delay(50);
+            Native.SetForegroundWindow(window);
+            await Task.Delay(200);
+        }
         if (NativeMethods.GetForegroundWindow() != window)
         {
             // Test harness only: the production paste service never changes focus.
@@ -250,7 +255,13 @@ internal static class Program
         }
         catch (Exception e) { Console.WriteLine("Screenshot unavailable: " + e.Message); }
     }
-    private static void ClearSelection() { Native.Key(0x11, false); Native.Key(0x41, false); Native.Key(0x41, true); Native.Key(0x11, true); }
+    private static async Task SelectAll()
+    {
+        Native.Key(0x11, false); Native.Key(0x41, false); Native.Key(0x41, true); Native.Key(0x11, true);
+        // SendInput queues messages; let the destination handle them before
+        // capturing the target and testing a separate application operation.
+        await Task.Delay(150);
+    }
     private static string ReadText(AutomationElement element)
     {
         if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var value)) return ((ValuePattern)value).Current.Value;

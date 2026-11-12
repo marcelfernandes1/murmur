@@ -1,3 +1,9 @@
+> **Windows preview:** A native Windows tray app is available in [windows/](windows/README.md).
+> It supports local speech recognition, hold-to-talk, hands-free recording, history,
+> vocabulary, and guarded paste. Trusted Windows signing is pending; automated
+> capture/paste checks use a virtual microphone on Windows. The documentation below
+> describes the Mac app.
+
 # Murmur 🎙️
 
 A fast, **100% local / offline** macOS dictation app — a stripped-down [Wispr Flow](https://wisprflow.ai) clone.

@@ -6,7 +6,7 @@ run on your PC. No account, API key, transcription server, or audio upload.
 
 ## Install
 
-Use `Murmur-Windows-0.1.0-x64-Setup.exe`, then open Murmur from Start.
+Use `Murmur-Windows-0.1.1-x64-Setup.exe`, then open Murmur from Start.
 The installer includes .NET and installs Microsoft's Visual C++ runtime if needed
 (Windows may ask for administrator approval for that prerequisite).
 
@@ -75,7 +75,11 @@ dotnet build windows/Murmur.Windows/Murmur.Windows.csproj -c Release
 
 Builds include .NET, so users do not need the SDK/runtime. The GitHub Actions
 workflow builds on Windows, runs behavior/recovery tests plus real whisper.cpp
-recognition of the upstream JFK sample, opens the packaged WPF app, checks its
+recognition of the upstream JFK sample. It also installs a signed VB-CABLE driver
+on the disposable runner, records prerecorded speech through the real WASAPI
+capture service, resamples and transcribes it, and verifies Unicode/text delivery
+in Notepad and Chrome. The virtual audio driver is test infrastructure only; it
+is never included in Murmur. The workflow opens the packaged WPF app, checks its
 accessible setup UI and single-instance activation, and uploads the ZIP, installer,
 checksums, test results, and a setup screenshot. Downloads are build artifacts;
 the workflow does not publish releases or change the Mac/iOS apps.
@@ -105,3 +109,28 @@ Check paste in Notepad, browsers, Office, Electron apps, and an elevated editor;
 check switching apps and focused controls during recognition. Verify multi-monitor
 placement at mixed DPI, keyboard/screen-reader navigation, history recovery,
 installer/uninstaller, and launch at sign-in on clean Windows 10/11 systems.
+
+## Code signing and public release
+
+Trusted signing is not configured yet. The website describes Windows but withholds
+the installer link until signing is ready. Do not call these CI builds signed.
+The application, cleanup helper, Murmur-owned DLLs, installer, and uninstaller must
+be signed using the approved provider; third-party components retain their own
+signatures and license notices. Do not sign upstream binaries as Murmur.
+
+After signing, validate the app directory and installer on Windows:
+
+```powershell
+./windows/scripts/verify-signatures.ps1 -AppDirectory <signed-app-folder> -InstallerPath <signed-setup.exe> -ExpectedSignerThumbprint <approved-certificate-thumbprint>
+```
+
+The check rejects unsigned files, invalid chains, a different publisher, or missing
+timestamps. Also install the signed package into a clean temporary directory and
+verify the installed binaries and uninstaller. Regenerate the portable ZIP and
+SHA-256 checksums from the final signed files. Re-run setup and paste acceptance
+on the exact signed package before publishing.
+
+Use a separate Windows tag such as `windows-v0.1.1`, marked **prerelease** and
+**not latest**, so `releases/latest/download/Murmur.dmg` and Mac updates still resolve
+to the Mac release. Only then replace the website's Windows signing-pending text
+with the verified installer URL. See [code signing policy and privacy](../site/windows-signing.html).
