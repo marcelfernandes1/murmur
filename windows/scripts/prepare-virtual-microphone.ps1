@@ -1,7 +1,17 @@
 # Test infrastructure only. This driver is never included in Murmur's installer.
 param([Parameter(Mandatory)][string]$Output)
 $ErrorActionPreference = 'Stop'
+if ($env:GITHUB_ACTIONS -ne 'true') { throw 'This setup script is only for a disposable GitHub Actions runner.' }
 New-Item -ItemType Directory -Force $Output | Out-Null
+# The hosted Windows Server image denies capture by default. Grant access only
+# on this disposable runner, whose only input is the prerecorded virtual cable.
+foreach ($hive in @('HKLM:', 'HKCU:')) {
+    $consent = "$hive\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+    foreach ($path in @($consent, "$consent\NonPackaged")) {
+        New-Item $path -Force | Out-Null
+        New-ItemProperty $path -Name Value -Value Allow -PropertyType String -Force | Out-Null
+    }
+}
 Set-Service AudioEndpointBuilder -StartupType Automatic
 Set-Service Audiosrv -StartupType Automatic
 Start-Service AudioEndpointBuilder

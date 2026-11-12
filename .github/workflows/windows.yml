@@ -39,9 +39,11 @@ jobs:
         shell: pwsh
         run: ./windows/scripts/prepare-virtual-microphone.ps1 -Output "${{ runner.temp }}/murmur-audio"
       - name: Test Windows capture and cross-app paste
+        timeout-minutes: 6
         shell: pwsh
         run: dotnet run --project windows/Murmur.Windows.IntegrationTests/Murmur.Windows.IntegrationTests.csproj -c Release -- fixtures windows/artifacts/verification
       - name: Test Windows setup and single-instance behavior
+        if: success() || failure()
         shell: pwsh
         run: ./windows/scripts/smoke-test.ps1 -AppPath windows/artifacts/Murmur-win-x64/Murmur.exe -Output windows/artifacts/verification
       - name: Upload Windows build

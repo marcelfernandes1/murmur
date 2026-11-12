@@ -107,6 +107,7 @@ internal static class Program
             await WaitForText(noteEditor, text);
             Assert(Clipboard.GetText() == text, "Clipboard text was not preserved.");
             Console.WriteLine(message);
+            SaveDesktop("notepad-unicode.png");
         });
         await Check("Captured speech pastes into Notepad", async () =>
         {
@@ -114,6 +115,7 @@ internal static class Program
             await Focus(noteWindow, noteEditor); ClearSelection();
             await TextDelivery.DeliverAsync(recognized, TextDelivery.CaptureTarget(), default);
             await WaitForText(noteEditor, recognized);
+            SaveDesktop("notepad-captured-speech.png");
         });
         await Check("Recording overlay does not steal destination focus", async () =>
         {
@@ -191,13 +193,14 @@ internal static class Program
                 await Task.Delay(150);
             }
             await WaitForText(second, "Take 0. Take 1. Take 2. ");
+            SaveDesktop("chrome-paste.png");
         });
     }
 
     private static async Task Check(string name, Func<Task> action)
     {
         try { await action(); Record(name, true); }
-        catch (Exception e) { Record(name, false, e.ToString()); }
+        catch (Exception e) { SaveDesktop($"failure-{failures + 1}.png"); Record(name, false, e.ToString()); }
     }
     private static void Record(string name, bool pass, string? error = null)
     {
@@ -219,9 +222,33 @@ internal static class Program
     }
     private static async Task Focus(nint window, AutomationElement element)
     {
-        Native.Key(0x12, false); Native.Key(0x12, true);
-        Native.SetForegroundWindow(window); element.SetFocus(); await Task.Delay(250);
+        Native.ShowWindow(window, 9);
+        Native.Key(0x12, false); await Task.Delay(50); Native.Key(0x12, true); await Task.Delay(50);
+        Native.SetForegroundWindow(window);
+        await Task.Delay(200);
+        if (NativeMethods.GetForegroundWindow() != window)
+        {
+            // Test harness only: the production paste service never changes focus.
+            var current = Native.GetCurrentThreadId();
+            var foreground = NativeMethods.GetWindowThreadProcessId(NativeMethods.GetForegroundWindow(), out _);
+            var attached = foreground != current && Native.AttachThreadInput(current, foreground, true);
+            try { Native.SetForegroundWindow(window); }
+            finally { if (attached) Native.AttachThreadInput(current, foreground, false); }
+        }
+        element.SetFocus(); await Task.Delay(250);
         Assert(NativeMethods.GetForegroundWindow() == window, "Could not focus the test destination.");
+    }
+    private static void SaveDesktop(string filename)
+    {
+        try
+        {
+            var bounds = System.Windows.Forms.SystemInformation.VirtualScreen;
+            using var bitmap = new System.Drawing.Bitmap(bounds.Width, bounds.Height);
+            using var graphics = System.Drawing.Graphics.FromImage(bitmap);
+            graphics.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bounds.Size);
+            bitmap.Save(Path.Combine(output, filename), System.Drawing.Imaging.ImageFormat.Png);
+        }
+        catch (Exception e) { Console.WriteLine("Screenshot unavailable: " + e.Message); }
     }
     private static void ClearSelection() { Native.Key(0x11, false); Native.Key(0x41, false); Native.Key(0x41, true); Native.Key(0x11, true); }
     private static string ReadText(AutomationElement element)
@@ -244,6 +271,9 @@ internal static class Program
     private static class Native
     {
         [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(nint window);
+        [DllImport("user32.dll")] internal static extern bool ShowWindow(nint window, int command);
+        [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll")] internal static extern bool AttachThreadInput(uint from, uint to, bool attach);
         internal static void Key(ushort key, bool up)
         {
             var inputs = new[] { new NativeMethods.Input { Type = 1, Union = new() { Keyboard = new() { Key = key, Flags = up ? 2u : 0u } } } };
