@@ -1,0 +1,22 @@
+# Test infrastructure only. This driver is never included in Murmur's installer.
+param([Parameter(Mandatory)][string]$Output)
+$ErrorActionPreference = 'Stop'
+New-Item -ItemType Directory -Force $Output | Out-Null
+Set-Service AudioEndpointBuilder -StartupType Automatic
+Set-Service Audiosrv -StartupType Automatic
+Start-Service AudioEndpointBuilder
+Start-Service Audiosrv
+$zip = Join-Path $Output 'vbcable.zip'
+Invoke-WebRequest 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip' -OutFile $zip
+if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne 'B950E39F01AF1D04EA623C8F6D8EB9B6EA5C477C637295FABF20631C85116BFB') { throw 'Virtual audio driver checksum mismatch.' }
+$driver = Join-Path $Output 'vbcable'
+Expand-Archive $zip $driver -Force
+$installer = Join-Path $driver 'VBCABLE_Setup_x64.exe'
+$signature = Get-AuthenticodeSignature $installer
+if ($signature.Status -ne 'Valid') { throw 'Virtual audio installer is not validly signed.' }
+$process = Start-Process $installer -ArgumentList '-i', '-h' -PassThru
+if (!$process.WaitForExit(90000)) { Stop-Process -Id $process.Id -Force; throw 'Virtual audio installation timed out.' }
+"Installer exit code: $($process.ExitCode)" | Write-Host
+pnputil /scan-devices
+Start-Sleep -Seconds 4
+Get-PnpDevice -Class Media | Select-Object Status, FriendlyName | Format-Table

@@ -1,0 +1,89 @@
+<Window x:Class="Murmur.Windows.Views.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Murmur" Width="900" Height="740" MinWidth="700" MinHeight="590" Background="#F6F8FA"
+        FontFamily="Segoe UI" FontSize="14" Icon="/Assets/murmur.ico" WindowStartupLocation="CenterScreen">
+  <Grid Margin="32,24,32,20">
+    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+    <DockPanel Margin="0,0,0,22">
+      <StackPanel><TextBlock Text="murmur" FontSize="32" FontWeight="SemiBold" /><TextBlock Text="Your voice, at your cursor." Foreground="{StaticResource Muted}" Margin="0,2,0,0" /></StackPanel>
+      <TextBlock Text="ON YOUR PC" Foreground="{StaticResource Accent}" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" />
+    </DockPanel>
+    <Border Grid.Row="1" Background="#E8F1FA" BorderBrush="#C8DEF1" BorderThickness="1" CornerRadius="12" Padding="20,16" Margin="0,0,0,22">
+      <StackPanel>
+        <TextBlock x:Name="StatusText" TextWrapping="Wrap" FontWeight="SemiBold" AutomationProperties.LiveSetting="Polite" />
+        <ProgressBar x:Name="DownloadBar" Height="4" Margin="0,12,0,0" Maximum="1" Visibility="Collapsed" />
+        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+          <Button x:Name="PrepareButton" Content="Download &amp; prepare" Style="{StaticResource PrimaryButton}" Click="Prepare_Click" />
+          <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Visibility="Collapsed" />
+          <Button x:Name="RetryButton" Content="Retry recording" Click="Retry_Click" Visibility="Collapsed" />
+        </StackPanel>
+      </StackPanel>
+    </Border>
+    <TabControl Grid.Row="2" Background="Transparent" BorderThickness="0" Padding="0,16,0,0">
+      <TabControl.Resources><Style TargetType="TabItem"><Setter Property="Padding" Value="18,10" /></Style></TabControl.Resources>
+      <TabItem Header="Dictation">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="SettingsPanel" Margin="0,0,14,16">
+            <TextBlock Text="Hold. Speak. Release." FontSize="24" FontWeight="SemiBold" Margin="0,6,0,8" />
+            <TextBlock x:Name="ShortcutHelp" TextWrapping="Wrap" Foreground="{StaticResource Muted}" />
+            <Grid Margin="0,4,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="28" /><ColumnDefinition /></Grid.ColumnDefinitions>
+              <StackPanel>
+                <Label Content="_Speech model" Target="{Binding ElementName=ModelBox}" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="ModelBox" AutomationProperties.Name="Speech model" />
+                <TextBlock Text="Larger models need more memory and time." FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,6,0,0" />
+                <Label Content="_Microphone" Target="{Binding ElementName=MicrophoneBox}" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="MicrophoneBox" AutomationProperties.Name="Microphone" />
+                <Button Content="Refresh microphones" Click="RefreshMics_Click" HorizontalAlignment="Left" Padding="10,4" MinHeight="30" Margin="0,6,0,0" />
+              </StackPanel>
+              <StackPanel Grid.Column="2">
+                <Label Content="_Language" Target="{Binding ElementName=LanguageBox}" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="LanguageBox" AutomationProperties.Name="Language" />
+                <TextBlock Text="Choose a language for more reliable recognition." FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,6,0,0" />
+                <Label Content="_Hold-to-talk key" Target="{Binding ElementName=TriggerBox}" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="TriggerBox" AutomationProperties.Name="Hold to talk key" />
+                <TextBlock Text="This key is reserved while Murmur is running." FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,6,0,0" />
+              </StackPanel>
+            </Grid>
+            <Separator Margin="0,20,0,8" />
+            <CheckBox x:Name="HandsFreeBox" Content="Press Space while holding the shortcut to go hands-free" />
+            <CheckBox x:Name="FillersBox" Content="Remove English hesitation words, like “um” and “uh”" />
+            <CheckBox x:Name="CleanupBox" Content="Smart cleanup — tidy punctuation and false starts on this PC" />
+            <TextBlock Text="Optional 986 MB download. Your original words are kept if cleanup cannot finish." FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="24,4,0,0" />
+            <CheckBox x:Name="HistoryBox" Content="Save my last 500 dictations on this PC" />
+            <CheckBox x:Name="SoundBox" Content="Play a sound when recording starts" />
+            <CheckBox x:Name="StartupBox" Content="Start Murmur when I sign in" />
+            <Button Content="Save settings" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,20,0,0" Click="Save_Click" />
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+      <TabItem Header="History">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+          <StackPanel Margin="0,4,0,16"><Label Content="_Search your dictations" Target="{Binding ElementName=SearchBox}" Padding="0,0,0,8" /><TextBox x:Name="SearchBox" TextChanged="Search_Changed" AutomationProperties.Name="Search dictations" /></StackPanel>
+          <TextBlock x:Name="EmptyHistory" Grid.Row="1" Text="Your words will appear here after your first dictation." TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,20,0,0" />
+          <ListBox x:Name="HistoryList" Grid.Row="1" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" AutomationProperties.Name="Dictation history">
+            <ListBox.ItemTemplate><DataTemplate>
+              <Border Padding="16" Margin="0,0,0,10" Background="White" BorderBrush="#DDE3E9" BorderThickness="1" CornerRadius="8">
+                <StackPanel>
+                  <DockPanel Margin="0,0,0,10"><TextBlock Text="{Binding CreatedAt, StringFormat={}{0:g}}" FontSize="12" Foreground="{StaticResource Muted}" /><Button Content="Copy" Tag="{Binding Text}" Click="Copy_Click" HorizontalAlignment="Right" Padding="12,4" MinHeight="28" Margin="12,0,0,0" /></DockPanel>
+                  <TextBox Text="{Binding Text, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" AutomationProperties.Name="Transcript" />
+                  <Expander Header="Original words" Margin="0,10,0,0"><TextBox Text="{Binding Original, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" AutomationProperties.Name="Original transcript" /></Expander>
+                </StackPanel>
+              </Border>
+            </DataTemplate></ListBox.ItemTemplate>
+          </ListBox>
+          <Button Grid.Row="2" Content="Clear history" Click="ClearHistory_Click" HorizontalAlignment="Left" Margin="0,12,0,0" />
+        </Grid>
+      </TabItem>
+      <TabItem Header="Vocabulary">
+        <Grid Margin="0,4,0,0">
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+          <StackPanel Margin="0,0,0,16"><TextBlock Text="Make room for your words." FontSize="24" FontWeight="SemiBold" /><TextBlock Text="Add names, products, and unusual spellings — one per line. These help recognition; they don’t replace what you say." TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,8,0,12" /><Label Content="_Your vocabulary (up to 100 words or phrases)" Target="{Binding ElementName=VocabularyBox}" Padding="0" /></StackPanel>
+          <TextBox x:Name="VocabularyBox" Grid.Row="1" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap" MaxLength="8100" AutomationProperties.Name="Custom vocabulary, one entry per line" />
+          <Button Grid.Row="2" Content="Save vocabulary" Click="SaveVocabulary_Click" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,16,0,0" />
+        </Grid>
+      </TabItem>
+    </TabControl>
+    <DockPanel Grid.Row="3" Margin="0,18,0,0"><TextBlock Text="Close this window to keep Murmur in your system tray." FontSize="12" Foreground="{StaticResource Muted}" /><Button Content="Microphone privacy" Click="Privacy_Click" Padding="8,2" MinHeight="26" HorizontalAlignment="Right" FontSize="12" Margin="12,0,0,0" /></DockPanel>
+  </Grid>
+</Window>
