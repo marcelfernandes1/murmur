@@ -4,6 +4,11 @@
 > capture/paste checks use a virtual microphone on Windows. The documentation below
 > describes the Mac app.
 
+Murmur’s own source is licensed under [MIT](LICENSE). Third-party dependencies
+and models retain their respective licenses. See the
+[Windows code signing policy and privacy information](https://murmur-xi-gold.vercel.app/site/windows-signing.html)
+for the SignPath Foundation application and current unsigned-preview status.
+
 # Murmur 🎙️
 
 A fast, **100% local / offline** macOS dictation app — a stripped-down [Wispr Flow](https://wisprflow.ai) clone.
