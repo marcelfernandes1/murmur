@@ -23,7 +23,9 @@ can be retried and never becomes an active model.
 Target: Windows 11, Intel or AMD x64 CPU, microphone, and 8 GB RAM recommended
 for larger models and cleanup. The installer also accepts Windows 10 2004 or newer,
 but Windows 10 compatibility has not been validated on hardware.
-This is an unsigned preview build. Code signing and hands-on hardware acceptance
+This is an unsigned preview build, published on the
+[Windows preview release page](https://github.com/marcelfernandes1/murmur/releases/tag/windows-v0.1.1).
+Code signing and hands-on hardware acceptance
 are required before treating it as a public production release. ARM64-native
 packages are not provided; emulation is unverified.
 
@@ -114,6 +116,9 @@ installer/uninstaller, and launch at sign-in on clean Windows 10/11 systems.
 
 Trusted signing is not configured yet. The website describes Windows but withholds
 the installer link until signing is ready. Do not call these CI builds signed.
+Murmur is applying to SignPath Foundation for free code signing; acceptance is
+pending. See the [code signing policy](../site/windows-signing.html) for roles,
+provider status, and privacy details.
 The application, cleanup helper, Murmur-owned DLLs, installer, and uninstaller must
 be signed using the approved provider; third-party components retain their own
 signatures and license notices. Do not sign upstream binaries as Murmur.
@@ -134,3 +139,10 @@ Use a separate Windows tag such as `windows-v0.1.1`, marked **prerelease** and
 **not latest**, so `releases/latest/download/Murmur.dmg` and Mac updates still resolve
 to the Mac release. Only then replace the website's Windows signing-pending text
 with the verified installer URL. See [code signing policy and privacy](../site/windows-signing.html).
+
+## License
+
+Murmur’s own code is released under the [MIT license](../LICENSE), included as
+`LICENSE` in the installer and portable package. Third-party code, model weights,
+and Microsoft runtime components retain the terms in `THIRD-PARTY-NOTICES.md`
+and the bundled `licenses` folder.

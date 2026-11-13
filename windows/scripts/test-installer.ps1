@@ -7,7 +7,7 @@ $installed = Join-Path $env:RUNNER_TEMP "murmur-install-$([guid]::NewGuid())"
 $process = Start-Process $InstallerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$installed`"", "/LOG=`"$Output/install.log`"") -PassThru
 if (!$process.WaitForExit(120000)) { Stop-Process -Id $process.Id -Force; throw 'Installer timed out.' }
 if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
-foreach ($file in @('Murmur.exe', 'Cleanup/Murmur.Cleanup.exe', 'unins000.exe')) {
+foreach ($file in @('Murmur.exe', 'Cleanup/Murmur.Cleanup.exe', 'unins000.exe', 'LICENSE')) {
     if (!(Test-Path (Join-Path $installed $file))) { throw "Installed package is missing $file" }
 }
 & "$PSScriptRoot/smoke-test.ps1" -AppPath "$installed/Murmur.exe" -Output $Output

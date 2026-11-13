@@ -10,6 +10,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Windows publish failed.' }
 dotnet publish "$root/Murmur.Cleanup/Murmur.Cleanup.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o "$app/Cleanup"
 if ($LASTEXITCODE -ne 0) { throw 'Cleanup publish failed.' }
 Copy-Item "$root/README.md" "$app/README.md"
+Copy-Item "$root/../LICENSE" "$app/LICENSE"
 Copy-Item "$root/THIRD-PARTY-NOTICES.md" "$app/THIRD-PARTY-NOTICES.md"
 Copy-Item "$root/licenses" "$app/licenses" -Recurse -Force
 if (!(Test-Path "$app/Murmur.exe") -or !(Test-Path "$app/Cleanup/Murmur.Cleanup.exe")) { throw 'Package is incomplete.' }
@@ -30,7 +31,7 @@ if ($Installer) {
     & $compilerPath "/DAppSource=$app" "/DOutput=$Output" "/DRedist=$redist" "/DAppVersion=$version" "$PSScriptRoot/installer.iss"
     if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
 }
-Get-ChildItem $Output -File | Where-Object { $_.Name -like 'Murmur-Windows-*' } | ForEach-Object {
+Get-ChildItem $Output -File | Where-Object { $_.Name -like 'Murmur-Windows-*' -and $_.Extension -in @('.exe', '.zip') } | ForEach-Object {
     $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $($_.Name)" | Set-Content "$($_.FullName).sha256" -Encoding ascii
 }

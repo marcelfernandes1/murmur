@@ -2,9 +2,9 @@ name: Murmur Windows
 on:
   push:
     branches: [main, 'codex/murmur-windows*']
-    paths: ['windows/**', '.github/workflows/windows.yml']
+    paths: ['windows/**', '.github/workflows/windows.yml', 'LICENSE']
   pull_request:
-    paths: ['windows/**', '.github/workflows/windows.yml']
+    paths: ['windows/**', '.github/workflows/windows.yml', 'LICENSE']
   workflow_dispatch:
 permissions:
   contents: read
