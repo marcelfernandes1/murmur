@@ -60,6 +60,11 @@ packages are not provided; emulation is unverified.
 - Closing the window leaves the tray app running. Right-click its tray icon to
   quit. Locking Windows or suspending the PC cancels a recording.
 
+If Murmur crashes or hits an unexpected error, it asks before sending an error
+report (error type, code location, app and Windows version — never recordings,
+words, history, settings, or your name). Declining deletes the report. Technical
+error details are also logged locally to `%LOCALAPPDATA%\Murmur\murmur.log`.
+
 If recording is unavailable, open **Microphone privacy**, enable microphone access
 and “Let desktop apps access your microphone,” then select an available input.
 

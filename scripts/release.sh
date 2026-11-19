@@ -117,6 +117,22 @@ xcodebuild archive "${build_cache_args[@]}" -disableAutomaticPackageResolution \
   DEVELOPMENT_TEAM="$TEAM_ID" PROVISIONING_PROFILE_SPECIFIER="" \
   -quiet
 
+# --- Crash-report symbols ----------------------------------------------------
+# Keep this build's dSYMs (build/ is wiped every run) so crash reports from this
+# exact version can always be symbolicated. With SENTRY_AUTH_TOKEN set (e.g. in
+# notary.env) and sentry-cli installed, also upload them so Sentry shows function
+# names and line numbers automatically.
+DSYM_DIR="$DIST_DIR/dsyms/$VERSION-$BUILD"
+rm -rf "$DSYM_DIR"; mkdir -p "$DSYM_DIR"
+cp -R "$ARCHIVE/dSYMs/." "$DSYM_DIR/" 2>/dev/null || echo "warning: archive has no dSYMs"
+if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]] && command -v sentry-cli >/dev/null; then
+  echo "==> Uploading dSYMs to Sentry…"
+  sentry-cli debug-files upload --org cel-media --project murmur-mac "$DSYM_DIR" \
+    || echo "warning: dSYM upload failed; copies are kept in $DSYM_DIR"
+else
+  echo "Crash-report symbols kept in $DSYM_DIR (set SENTRY_AUTH_TOKEN + install sentry-cli to upload)."
+fi
+
 # --- Export ----------------------------------------------------------------
 cat > "$BUILD_DIR/ExportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
