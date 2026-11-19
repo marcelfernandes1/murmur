@@ -12,7 +12,7 @@ import Sentry
 enum CrashReporter {
     /// Sentry project "murmur-mac". A DSN only allows sending reports; it is safe
     /// to publish. Empty disables crash reporting entirely.
-    static let dsn = ""
+    static let dsn = "https://0089b6efbcfdaab79b1497d48ee52739@o4511561210855424.ingest.us.sentry.io/4512460204212224"
 
     private static let pendingDirectory: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -56,7 +56,14 @@ enum CrashReporter {
         sdk["settings"] = ["infer_ip": "never"] // Ask Sentry not to record the sender's IP.
         payload["sdk"] = sdk
         guard JSONSerialization.isValidJSONObject(payload),
-              let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+              let raw = try? JSONSerialization.data(withJSONObject: payload),
+              var json = String(data: raw, encoding: .utf8) else { return }
+        // Binary paths can sit under the home folder (e.g. ~/Downloads/Murmur.app),
+        // which would reveal the account name. JSON escapes "/" as "\/".
+        let home = NSHomeDirectory()
+        json = json.replacingOccurrences(of: home.replacingOccurrences(of: "/", with: "\\/"), with: "~")
+            .replacingOccurrences(of: home, with: "~")
+        let data = Data(json.utf8)
         try? FileManager.default.createDirectory(at: pendingDirectory, withIntermediateDirectories: true)
         let id = (payload["event_id"] as? String) ?? UUID().uuidString
         try? data.write(to: pendingDirectory.appendingPathComponent("\(id).json"), options: .atomic)

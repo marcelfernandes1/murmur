@@ -6,7 +6,7 @@ run on your PC. No account, API key, transcription server, or audio upload.
 
 ## Install
 
-Use `Murmur-Windows-0.1.2-x64-Setup.exe`, then open Murmur from Start.
+Use `Murmur-Windows-0.1.3-x64-Setup.exe`, then open Murmur from Start.
 The installer is not code-signed yet, so Windows shows **Windows protected your PC**.
 Select **More info**, then **Run anyway**. If your browser warns about the download,
 choose **Keep**. PCs with Smart App Control turned on, or company-managed PCs that
@@ -28,7 +28,7 @@ Target: Windows 11, Intel or AMD x64 CPU, microphone, and 8 GB RAM recommended
 for larger models and cleanup. The installer also accepts Windows 10 2004 or newer,
 but Windows 10 compatibility has not been validated on hardware.
 This is an unsigned preview build, published on the
-[Windows preview release page](https://github.com/marcelfernandes1/murmur/releases/tag/windows-v0.1.2).
+[Windows preview release page](https://github.com/marcelfernandes1/murmur/releases/tag/windows-v0.1.3).
 Code signing and hands-on hardware acceptance
 are required before treating it as a public production release. ARM64-native
 packages are not provided; emulation is unverified.
@@ -144,7 +144,7 @@ verify the installed binaries and uninstaller. Regenerate the portable ZIP and
 SHA-256 checksums from the final signed files. Re-run setup and paste acceptance
 on the exact signed package before publishing.
 
-Use a separate Windows tag such as `windows-v0.1.2`, marked **prerelease** and
+Use a separate Windows tag such as `windows-v0.1.3`, marked **prerelease** and
 **not latest**, so `releases/latest/download/Murmur.dmg` and Mac updates still resolve
 to the Mac release. Only then replace the website's Windows signing-pending text
 with the verified installer URL. See [code signing policy and privacy](../site/windows-signing.html).

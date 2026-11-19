@@ -8,7 +8,7 @@ internal static class ErrorReporter
 {
     // Sentry project "murmur-windows". A DSN only allows sending reports; it is safe
     // to publish. Empty disables reporting entirely (no prompts, nothing saved).
-    private const string Dsn = "";
+    private const string Dsn = "https://bcab11e4fbef0bb757642c5ee14a950d@o4511561210855424.ingest.us.sentry.io/4512460208078848";
 
     private static readonly SentryDsn? Target = SentryDsn.Parse(Dsn);
     private static readonly ErrorReportStore Store = new(Path.Combine(AppPaths.Root, "Reports"));

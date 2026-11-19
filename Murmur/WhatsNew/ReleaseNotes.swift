@@ -24,6 +24,18 @@ enum ReleaseNotes {
     /// Newest first.
     static let all: [Release] = [
         Release(
+            version: "0.5.8",
+            headline: "Crash reports, only if you say yes",
+            highlights: [
+                Highlight(icon: "exclamationmark.bubble",
+                          title: "Help fix crashes",
+                          detail: "If Murmur ever quits unexpectedly, it asks the next time it opens whether to send a crash report. Choose Don't Send and the report is deleted."),
+                Highlight(icon: "lock.shield",
+                          title: "Your words stay yours",
+                          detail: "A crash report holds technical details, Murmur's version, and your Mac model and macOS version. It never includes recordings, transcripts, history, or your name.")
+            ]
+        ),
+        Release(
             version: "0.5.7",
             headline: "Quiet dictations keep their words",
             highlights: [
