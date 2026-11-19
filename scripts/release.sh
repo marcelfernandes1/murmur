@@ -110,7 +110,7 @@ echo "==> Archiving…"
 build_cache_args=()
 [[ -n "${MURMUR_DERIVED_DATA:-}" ]] && build_cache_args+=(-derivedDataPath "$MURMUR_DERIVED_DATA")
 [[ -n "${MURMUR_SOURCE_PACKAGES:-}" ]] && build_cache_args+=(-clonedSourcePackagesDirPath "$MURMUR_SOURCE_PACKAGES")
-xcodebuild archive "${build_cache_args[@]}" -disableAutomaticPackageResolution \
+xcodebuild archive ${build_cache_args[@]+"${build_cache_args[@]}"} -disableAutomaticPackageResolution \
   -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
   -archivePath "$ARCHIVE" \
   CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$DEV_ID_CERT" \
@@ -184,7 +184,7 @@ STAGE="$(mktemp -d)"; cp -R "$APP" "$STAGE/"; rm -f "$DMG"
 create-dmg \
   --volname "Murmur $VERSION" \
   --volicon "$ASSETS/Murmur.icns" \
-  "${BG_ARGS[@]}" \
+  ${BG_ARGS[@]+"${BG_ARGS[@]}"} \
   --window-pos 200 120 --window-size 600 400 --icon-size 128 \
   --icon "Murmur.app" 150 200 --app-drop-link 450 200 \
   --hide-extension "Murmur.app" --no-internet-enable \
