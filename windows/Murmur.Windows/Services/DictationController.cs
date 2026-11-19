@@ -20,7 +20,7 @@ internal sealed class DictationController
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(50) };
     private CancellationTokenSource? operationCancellation;
     private Task operation = Task.CompletedTask;
-    private DeliveryTarget? target;
+    private Task<DeliveryTarget>? target;
     private Settings? recordingSettings;
     private long startedAt;
     private float[]? retrySamples;
@@ -151,7 +151,7 @@ internal sealed class DictationController
                     break;
                 }
                 retrySamples = null; retrySettings = null;
-                target = TextDelivery.CaptureTarget();
+                target = TextDelivery.CaptureTargetAsync();
                 recordingSettings = Settings;
                 startedAt = Stopwatch.GetTimestamp();
                 try
@@ -193,7 +193,7 @@ internal sealed class DictationController
                 case CaptureOutcome.NoSignal: SetStatus("Your microphone was silent. Check mute and try again.", show: true); return;
             }
             retrySamples = samples; retrySettings = recordingSettings;
-            await TranscribeAndDeliverAsync(samples, recordingSettings!, target!, generation, token);
+            await TranscribeAndDeliverAsync(samples, recordingSettings!, await target!, generation, token);
         }
         catch (OperationCanceledException) { SetStatus("Dictation canceled."); }
         catch (Exception e) { SetStatus(FriendlyError(e, "Dictation could not finish. Open Murmur to retry the recording."), show: true); }

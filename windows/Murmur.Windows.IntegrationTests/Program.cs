@@ -92,6 +92,22 @@ internal static class Program
             Record("immediate microphone stop after shortcut release", true);
         });
 
+        await Check("Shortcut keeps working while the app is busy", async () =>
+        {
+            // The real low-level hook. Blocking the UI thread longer than Windows'
+            // LowLevelHooksTimeout used to drop key releases and remove the hook.
+            using var hotkey = new GlobalHotkey(Dispatcher.CurrentDispatcher, acceptInjected: true) { TriggerKey = 0x78 };
+            int pressed = 0, released = 0;
+            hotkey.Pressed += () => pressed++;
+            hotkey.Released += () => released++;
+            Native.Key(0x78, false);
+            Thread.Sleep(2500);
+            Native.Key(0x78, true);
+            await Task.Delay(300);
+            Assert(pressed == 1 && released == 1, $"Busy hold: pressed={pressed}, released={released}.");
+            for (var i = 0; i < 3; i++) { Native.Key(0x78, false); Native.Key(0x78, false); Native.Key(0x78, true); await Task.Delay(150); }
+            Assert(pressed == 4 && released == 4, $"Hook stopped after a busy period: pressed={pressed}, released={released}.");
+        });
         var notepad = Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true })!;
         Processes.Add(notepad);
         var noteWindow = await WaitWindow(() => { notepad.Refresh(); return notepad.MainWindowHandle; });
