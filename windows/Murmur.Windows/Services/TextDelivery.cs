@@ -8,19 +8,36 @@ internal static class TextDelivery
 {
     public static DeliveryTarget CaptureTarget()
     {
+        var (window, focus, processId) = CaptureWindow();
+        return new(window, focus, processId, FocusedElementId());
+    }
+    /// Same as CaptureTarget, but the UI Automation query runs off the UI thread
+    /// and cannot hang dictation: a slow or frozen app just gets no element id.
+    public static async Task<DeliveryTarget> CaptureTargetAsync()
+    {
+        var (window, focus, processId) = CaptureWindow();
+        string? elementId;
+        try { elementId = await Task.Run(FocusedElementId).WaitAsync(TimeSpan.FromSeconds(2)); }
+        catch (TimeoutException) { elementId = "unavailable"; }
+        return new(window, focus, processId, elementId);
+    }
+    private static (nint Window, nint Focus, uint ProcessId) CaptureWindow()
+    {
         var window = NativeMethods.GetForegroundWindow();
         var thread = NativeMethods.GetWindowThreadProcessId(window, out var processId);
         var info = new NativeMethods.GuiThreadInfo { Size = (uint)Marshal.SizeOf<NativeMethods.GuiThreadInfo>() };
         var focus = NativeMethods.GetGUIThreadInfo(thread, ref info) ? info.Focus : 0;
-        string? elementId = null;
+        return (window, focus, processId);
+    }
+    private static string? FocusedElementId()
+    {
         try
         {
             // Browsers can share one native HWND across multiple editable fields.
             var element = AutomationElement.FocusedElement;
-            if (element is not null) elementId = string.Join(":", element.GetRuntimeId());
+            return element is null ? null : string.Join(":", element.GetRuntimeId());
         }
-        catch (Exception e) when (e is ElementNotAvailableException or COMException or InvalidOperationException) { }
-        return new(window, focus, processId, elementId);
+        catch (Exception e) when (e is ElementNotAvailableException or COMException or InvalidOperationException) { return null; }
     }
     public static async Task CopyAsync(string text, CancellationToken token)
     {
@@ -37,7 +54,7 @@ internal static class TextDelivery
         // Do not release keys held by the user or refocus a window behind their back.
         for (var i = 0; i < 20 && ModifiersHeld(); i++) await Task.Delay(50, token);
         token.ThrowIfCancellationRequested();
-        var now = CaptureTarget();
+        var now = await CaptureTargetAsync();
         if (target.Window == 0 || target.Focus == 0 || target.ProcessId == Environment.ProcessId ||
             now != target || ModifiersHeld()) return "Copied. Paste when you’re ready.";
         NativeMethods.Input Key(ushort key, bool up) => new()

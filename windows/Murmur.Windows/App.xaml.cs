@@ -24,6 +24,16 @@ public partial class App : Application
             catch (WaitHandleCannotBeOpenedException) { }
             Shutdown(); return;
         }
+        // An unexpected error must not silently close a tray app the user relies on.
+        // Log it (never transcript text), reset any half-started dictation, keep running.
+        DispatcherUnhandledException += (_, args) =>
+        {
+            CrashLog.Write(args.Exception);
+            args.Handled = true;
+            try { controller?.Cancel(); } catch (Exception inner) { CrashLog.Write(inner); }
+        };
+        TaskScheduler.UnobservedTaskException += (_, args) => { CrashLog.Write(args.Exception); args.SetObserved(); };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) => CrashLog.Write(args.ExceptionObject as Exception);
         try
         {
             controller = new(Dispatcher);
@@ -42,8 +52,9 @@ public partial class App : Application
             if (!e.Args.Contains("--background") || !controller.Models.IsDownloaded(ModelCatalog.Find(controller.Settings.ModelId))) ShowMain();
             controller.Initialize();
         }
-        catch (Exception)
+        catch (Exception error)
         {
+            CrashLog.Write(error);
             MessageBox.Show("Murmur could not start. Make sure its folder is writable and all files were extracted, then try again.", "Murmur", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
         }
