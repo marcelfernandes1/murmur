@@ -129,7 +129,7 @@ internal sealed class DictationController
             SetStatus($"Ready. Hold {Settings.TriggerKeys[Settings.TriggerKey]} to talk.");
         }
         catch (OperationCanceledException) { SetStatus("Setup paused. Select Download & prepare to try again."); }
-        catch (Exception e) { SetStatus(FriendlyError(e, "Model setup could not finish. Check your connection and free disk space, then try again.")); }
+        catch (Exception e) { Report(e, "model_setup"); SetStatus(FriendlyError(e, "Model setup could not finish. Check your connection and free disk space, then try again.")); }
         finally
         {
             preparing = false;
@@ -196,7 +196,7 @@ internal sealed class DictationController
             await TranscribeAndDeliverAsync(samples, recordingSettings!, await target!, generation, token);
         }
         catch (OperationCanceledException) { SetStatus("Dictation canceled."); }
-        catch (Exception e) { SetStatus(FriendlyError(e, "Dictation could not finish. Open Murmur to retry the recording."), show: true); }
+        catch (Exception e) { Report(e, "dictation"); SetStatus(FriendlyError(e, "Dictation could not finish. Open Murmur to retry the recording."), show: true); }
         finally { Finish(generation); }
     }
 
@@ -226,7 +226,7 @@ internal sealed class DictationController
                 SetStatus("Tidying your words on your PC…", show: true);
                 text = await CleanupService.CleanAsync(text, Models.PathFor(ModelCatalog.Cleanup), token);
             }
-            catch (Exception) when (!token.IsCancellationRequested) { cleanupFailed = true; }
+            catch (Exception e) when (!token.IsCancellationRequested) { if (Models.IsDownloaded(ModelCatalog.Cleanup)) Report(e, "cleanup"); cleanupFailed = true; }
         }
         if (!session.IsCurrent(generation)) return;
         token.ThrowIfCancellationRequested();
@@ -270,7 +270,7 @@ internal sealed class DictationController
             await TranscribeAndDeliverAsync(samples, snapshot, new(0, 0, 0), generation, token);
         }
         catch (OperationCanceledException) { SetStatus("Dictation canceled."); }
-        catch (Exception e) { SetStatus(FriendlyError(e, "Still unable to transcribe. Try a smaller model or restart Murmur."), show: true); }
+        catch (Exception e) { Report(e, "retry"); SetStatus(FriendlyError(e, "Still unable to transcribe. Try a smaller model or restart Murmur."), show: true); }
         finally { Finish(generation); }
     }
 
@@ -342,6 +342,13 @@ internal sealed class DictationController
     private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
     {
         if (e.Mode == PowerModes.Suspend) dispatcher.BeginInvoke(Cancel);
+    }
+    /// Unexpected failures go to ask-first error reporting. Network trouble, slow
+    /// PCs, damaged downloads, and cancellation are expected and not reported.
+    private static void Report(Exception e, string where)
+    {
+        if (e is HttpRequestException or TimeoutException or InvalidDataException or OperationCanceledException) return;
+        ErrorReporter.Record(e, handled: true, where);
     }
     private static string FriendlyError(Exception e, string fallback) => e switch
     {

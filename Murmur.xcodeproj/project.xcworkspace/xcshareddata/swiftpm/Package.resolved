@@ -1,5 +1,4 @@
 {
-  "originHash" : "0bd19a2d0f5a1768e4c8adc894151e7038cf03d02c68f03f854980d6cf8a7c2c",
   "pins" : [
     {
       "identity" : "dynamicnotchkit",
@@ -35,6 +34,15 @@
       "state" : {
         "revision" : "427f3b8957a40982500abc8d35ccff8b83ec56a4",
         "version" : "2.1.0"
+      }
+    },
+    {
+      "identity" : "sentry-cocoa",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/getsentry/sentry-cocoa",
+      "state" : {
+        "revision" : "485e0622e00d60d71eb6b519822188e2eb7c29e3",
+        "version" : "9.35.0"
       }
     },
     {
@@ -128,5 +136,5 @@
       }
     }
   ],
-  "version" : 3
+  "version" : 2
 }

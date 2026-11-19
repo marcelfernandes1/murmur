@@ -9,8 +9,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.5.7"
-    CURRENT_PROJECT_VERSION: "96"
+    MARKETING_VERSION: "0.5.8"
+    CURRENT_PROJECT_VERSION: "97"
     PRODUCT_BUNDLE_IDENTIFIER: com.murmur.app
     ENABLE_HARDENED_RUNTIME: "YES"
     # Sign with a stable Development identity (not ad-hoc) so macOS keeps the
@@ -41,6 +41,10 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: "2.6.0"
+  # Ask-first crash reporting (Murmur/App/CrashReporter.swift).
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa
+    from: "9.35.0"
   # whisper.cpp's official prebuilt XCFramework (Metal + Core ML), wrapped by a
   # tiny local package so models run GPU-accelerated on Apple Silicon. See
   # Vendor/WhisperCpp/Package.swift for why the binary release (not source).
@@ -66,6 +70,8 @@ targets:
       - package: FluidAudio
       - package: LLM
       - package: Sparkle
+      - package: Sentry
+        product: Sentry
       - package: WhisperCpp
         product: WhisperCppKit
 

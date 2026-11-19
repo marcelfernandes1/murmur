@@ -39,7 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        CrashReporter.start()
         #if DEBUG
+        // Exercises the crash → ask → send path end to end.
+        if ProcessInfo.processInfo.environment["MURMUR_TEST_CRASH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { fatalError("Murmur crash-report test") }
+        }
         if let fixtures = ProcessInfo.processInfo.environment["MURMUR_LEARNING_AUDIO_TESTS"] {
             Task { exit(Int32(await WhisperCppService.runLearningAudioTests(fixtures: fixtures))) }
             return

@@ -44,7 +44,7 @@ struct OnboardingView: View {
         switch step {
         case .welcome:
             step(icon: "waveform", title: "Welcome to Murmur",
-                 subtitle: "Hold a key, speak, and your words appear — transcribed privately, on-device. Nothing ever leaves your Mac.") {
+                 subtitle: "Hold a key, speak, and your words appear — transcribed privately, on-device. Nothing leaves your Mac without your OK.") {
                 EmptyView()
             }
 
