@@ -1,6 +1,7 @@
 import ApplicationServices
 import AppKit
 import Carbon.HIToolbox
+import IOKit
 
 /// Wraps the Accessibility (AX) APIs we need: permission state, detecting
 /// whether the focused UI element accepts text, and the secure-input guard.
@@ -10,9 +11,129 @@ final class AccessibilityManager {
     /// focused element and to post synthetic key events).
     var isTrusted: Bool { AXIsProcessTrusted() }
 
-    /// True when a secure text field (e.g. a password field) is active. Synthetic
-    /// paste is blocked in that state, so we fall back to clipboard-only.
+    /// True when SOME process on this Mac has secure keyboard input switched on.
+    ///
+    /// This is system-wide, not "the focused field is a password field": a `sudo`
+    /// prompt left waiting in a background terminal tab, a password manager, a
+    /// browser window with a login form, or an app that simply forgot to switch
+    /// it off all hold it while the user types somewhere else entirely. Never
+    /// decide a delivery on this alone — use `secureFieldVerdict()`.
     var isSecureInputActive: Bool { IsSecureEventInputEnabled() }
+
+    /// How a delivery must treat the field that currently has focus.
+    enum SecureFieldVerdict: Equatable {
+        /// Nothing secret about it. Insert (or copy) and record as usual.
+        case normal
+        /// The frontmost app holds secure input but the focused field is an
+        /// ordinary one — a terminal with "Secure Keyboard Entry" on, or a
+        /// terminal password prompt, which look identical from outside. Deliver
+        /// the text, but keep it out of history.
+        case sensitive
+        /// A password field. Deliver nothing, anywhere.
+        case password
+    }
+
+    /// Classify the focused field. See `secureFieldVerdict(secureInput:…)`.
+    func secureFieldVerdict() -> SecureFieldVerdict {
+        let secureInput = isSecureInputActive
+        let element = isTrusted ? focusedElement() : nil
+        var subroleRef: CFTypeRef?
+        if let element {
+            AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleRef)
+        }
+        let isSecureField = (subroleRef as? String) == (kAXSecureTextFieldSubrole as String)
+        return Self.secureFieldVerdict(
+            secureInput: secureInput,
+            focusReadable: element != nil,
+            focusedIsSecureField: isSecureField,
+            ownerIsFrontmost: secureInput ? Self.secureInputOwnerIsFrontmost() : nil)
+    }
+
+    /// The decision itself, free of system calls so the self-test can cover it.
+    ///
+    /// The old rule was "secure input is on anywhere → password field", which
+    /// threw away dictations into ordinary fields whenever an unrelated app held
+    /// secure input. The focused field decides instead; secure input only counts
+    /// when the app holding it is the one in front.
+    ///
+    /// - Parameter ownerIsFrontmost: nil when the holder can't be identified,
+    ///   which is treated as "it might be" — the cautious reading.
+    nonisolated static func secureFieldVerdict(
+        secureInput: Bool, focusReadable: Bool,
+        focusedIsSecureField: Bool, ownerIsFrontmost: Bool?
+    ) -> SecureFieldVerdict {
+        if focusedIsSecureField { return .password }
+        guard secureInput else { return .normal }
+        // Held by some other app: nothing to do with where the user is typing.
+        guard ownerIsFrontmost ?? true else { return .normal }
+        // The app in front holds it and won't say what has focus. Can't rule a
+        // password field out, so don't risk it.
+        guard focusReadable else { return .password }
+        return .sensitive
+    }
+
+    /// Whether the process holding secure input belongs to the frontmost app.
+    /// nil when the holder can't be identified.
+    private static func secureInputOwnerIsFrontmost() -> Bool? {
+        guard let owner = secureInputOwnerPID() else { return nil }
+        guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
+        if owner == front.processIdentifier { return true }
+        // A helper process inside the frontmost app's bundle counts as that app.
+        if let frontPath = front.bundleURL?.standardizedFileURL.path,
+           let ownerPath = NSRunningApplication(processIdentifier: owner)?
+               .bundleURL?.standardizedFileURL.path,
+           ownerPath == frontPath || ownerPath.hasPrefix(frontPath + "/") {
+            return true
+        }
+        return false
+    }
+
+    /// The pid that switched secure input on, as the window server reports it.
+    private static func secureInputOwnerPID() -> pid_t? {
+        let key = "kCGSSessionSecureInputPID"
+        if let session = CGSessionCopyCurrentDictionary() as? [String: Any],
+           let pid = session[key] as? NSNumber {
+            return pid.int32Value
+        }
+        let root = IORegistryGetRootEntry(kIOMainPortDefault)
+        defer { IOObjectRelease(root) }
+        let users = IORegistryEntryCreateCFProperty(
+            root, "IOConsoleUsers" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? [[String: Any]]
+        for user in users ?? [] {
+            if let pid = user[key] as? NSNumber { return pid.int32Value }
+        }
+        return nil
+    }
+
+    /// `MURMUR_TEST_CAPTURE=1`: the verdict table, including the false positive
+    /// that used to discard dictations (secure input held by a background app).
+    nonisolated static func runSecureFieldSelfTest() -> Int {
+        typealias V = SecureFieldVerdict
+        let cases: [(name: String, secure: Bool, readable: Bool, field: Bool, front: Bool?, expect: V)] = [
+            ("no secure input, normal field", false, true, false, nil, .normal),
+            ("no secure input, nothing readable", false, false, false, nil, .normal),
+            ("password field", true, true, true, true, .password),
+            ("password field, secure input not reported", false, true, true, nil, .password),
+            ("background app holds secure input, normal field", true, true, false, false, .normal),
+            ("background app holds secure input, nothing readable", true, false, false, false, .normal),
+            ("frontmost holds secure input, normal field (terminal)", true, true, false, true, .sensitive),
+            ("frontmost holds secure input, nothing readable", true, false, false, true, .password),
+            ("holder unknown, normal field", true, true, false, nil, .sensitive),
+            ("holder unknown, nothing readable", true, false, false, nil, .password),
+        ]
+        var passed = 0
+        for c in cases {
+            let got = secureFieldVerdict(secureInput: c.secure, focusReadable: c.readable,
+                                         focusedIsSecureField: c.field, ownerIsFrontmost: c.front)
+            let ok = got == c.expect
+            if ok { passed += 1 }
+            print("[SecureField] \(ok ? "PASS" : "FAIL") \(c.name)  got=\(got) expect=\(c.expect)")
+        }
+        print("[SecureField] \(passed)/\(cases.count) passed")
+        fflush(stdout)
+        return cases.count - passed
+    }
 
     init() {
         terminationObserver = NSWorkspace.shared.notificationCenter.addObserver(

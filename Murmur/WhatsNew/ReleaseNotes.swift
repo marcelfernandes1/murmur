@@ -24,6 +24,18 @@ enum ReleaseNotes {
     /// Newest first.
     static let all: [Release] = [
         Release(
+            version: "0.5.9",
+            headline: "No more false \"Password field\" warnings",
+            highlights: [
+                Highlight(icon: "lock.open",
+                          title: "Dictation is no longer thrown away by mistake",
+                          detail: "Murmur used to discard your words whenever any app on your Mac was waiting for a password, even in another window. It now checks the field you are actually typing in."),
+                Highlight(icon: "lock.shield",
+                          title: "Real password fields stay protected",
+                          detail: "Dictating into a password field still inserts nothing, and leaves nothing on your clipboard or in history.")
+            ]
+        ),
+        Release(
             version: "0.5.8",
             headline: "Crash reports, only if you say yes",
             highlights: [

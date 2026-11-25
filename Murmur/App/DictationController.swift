@@ -214,6 +214,7 @@ final class DictationController {
             ranTests = true
             testFailures += Self.runCaptureSelfTest()
             testFailures += AudioRecorder.runFailureSelfTest()
+            testFailures += AccessibilityManager.runSecureFieldSelfTest()
         }
         if env["MURMUR_TEST_COVERAGE"] != nil {
             ranTests = true
@@ -916,25 +917,28 @@ final class DictationController {
         // Get the text to the user FIRST — pasting must not wait on history I/O.
         let trusted = accessibility.isTrusted
         appState.accessibilityEnabled = trusted
+        // NOT "is secure input on" — that is system-wide and true whenever any
+        // app, in any window, holds it. Ask about the field that has focus.
         let secureInput = accessibility.isSecureInputActive
+        let verdict = accessibility.secureFieldVerdict()
         let editableFocused = trusted && accessibility.isEditableFieldFocused()
-        let canInsert = trusted && !secureInput && editableFocused
+        let canInsert = trusted && verdict != .password && editableFocused
         if !canInsert {
             // Falling back to the clipboard is a silent downgrade — the text is
             // safe but it does not land where the user is typing, and nothing
             // says why. Always log which of the three conditions refused, plus
             // what actually had focus, so a report of "it just says Copied" is
             // answerable from the log instead of guesswork.
-            Self.audioLog.warning("delivery fell back to clipboard: trusted=\(trusted, privacy: .public) secureInput=\(secureInput, privacy: .public) editableFieldFocused=\(editableFocused, privacy: .public) \(self.accessibility.focusDiagnostics(), privacy: .public)")
+            Self.audioLog.warning("delivery fell back to clipboard: trusted=\(trusted, privacy: .public) secureInput=\(secureInput, privacy: .public) verdict=\(String(describing: verdict), privacy: .public) editableFieldFocused=\(editableFocused, privacy: .public) \(self.accessibility.focusDiagnostics(), privacy: .public)")
         }
 
-        if secureInput {
-            // Secure input means a password field is focused. We already refuse to
-            // type there — but the clipboard fallback used to park the passphrase
-            // on the general pasteboard (readable by every app, captured by
-            // clipboard managers, synced to iPhone) and commit it to history as
-            // plaintext. Deliver nothing instead, and say why.
-            Self.audioLog.warning("secure input active — dictation discarded rather than sent to the clipboard")
+        if verdict == .password {
+            // A password field is focused. We already refuse to type there — but
+            // the clipboard fallback used to park the passphrase on the general
+            // pasteboard (readable by every app, captured by clipboard managers,
+            // synced to iPhone) and commit it to history as plaintext. Deliver
+            // nothing instead, and say why.
+            Self.audioLog.warning("password field focused — dictation discarded rather than sent to the clipboard. secureInput=\(secureInput, privacy: .public) \(self.accessibility.focusDiagnostics(), privacy: .public)")
             flagError(.error("Secure field — not inserted"),
                       notch: "Password field — dictation discarded")
             return
@@ -960,6 +964,11 @@ final class DictationController {
         // can never delay the user getting their text. Always record the raw
         // transcript so the comparison screen has an entry for every dictation —
         // identical columns when nothing was changed.
+        //
+        // Except when the frontmost app holds secure input: a terminal password
+        // prompt is indistinguishable from an ordinary terminal line, so the
+        // text is delivered but never written down.
+        guard verdict == .normal else { return }
         let historyState = signposter.beginInterval("history")
         history.add(text, original: original)
         signposter.endInterval("history", historyState)
